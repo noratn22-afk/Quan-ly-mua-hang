@@ -192,6 +192,7 @@
                                 <th class="py-3.5 px-4">Ngày Order</th>
                                 <th class="py-3.5 px-4">Mã đơn / PO</th>
                                 <th class="py-3.5 px-4">Tên mặt hàng</th>
+                                <th class="py-3.5 px-4">Hình ảnh SP</th>
                                 <th class="py-3.5 px-4">ĐVT</th>
                                 <th class="py-3.5 px-4">Số lượng</th>
                                 <th class="py-3.5 px-4">Khu vực</th>
@@ -5239,8 +5240,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             return pending;
         }
 
-        function triggerProductImageUpload(itemId) {
-            const input = document.getElementById(getSafeProductImageInputId(itemId));
+        function triggerProductImageUpload(itemId, context = 'status') {
+            const input = document.getElementById(getSafeProductImageInputId(itemId, context));
             if (input) input.click();
         }
 
@@ -5279,6 +5280,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 productImageLoadFailed.delete(newKey);
                 productImageURLCache.set(newKey, URL.createObjectURL(blob));
                 closeProductImageViewer();
+                renderOrders();
                 renderStatusTable();
                 if (window.lucide?.createIcons) lucide.createIcons();
             } catch (error) {
@@ -5287,7 +5289,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             }
         }
 
-        function viewProductImage(itemId) {
+        function viewProductImage(itemId, context = 'status') {
             const order = orders.find(item => String(item.id) === String(itemId));
             if (!order) return;
             const imageKey = String(order.productImageStorageKey || '');
@@ -5298,7 +5300,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 const modal = document.createElement('div');
                 modal.id = 'product-image-viewer-modal';
                 modal.className = 'fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4';
-                modal.innerHTML = `<div class="bg-white w-full max-w-4xl max-h-[94vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col"><div class="px-4 py-3 border-b border-slate-200 flex items-start justify-between gap-3"><div class="min-w-0"><div class="font-bold text-slate-900">Hình ảnh sản phẩm</div><div class="text-xs text-slate-500 mt-1 break-words">${escapeHTML(order.item || '-')} • ${escapeHTML(order.productImageFileName || 'Ảnh đã tải lên')}</div></div><button type="button" onclick="closeProductImageViewer()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold">Đóng ✕</button></div><div class="flex-1 min-h-0 overflow-auto bg-slate-50 p-3 flex items-center justify-center"><img src="${escapeHTMLAttribute(imageUrl)}" alt="${escapeHTMLAttribute(order.item || 'Hình ảnh sản phẩm')}" class="max-w-full max-h-[75vh] object-contain rounded-lg bg-white"></div><div class="px-4 py-3 border-t border-slate-200 flex justify-end"><button type="button" onclick='triggerProductImageUpload(${JSON.stringify(String(order.id))})' class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold">Đổi ảnh</button></div></div>`;
+                modal.innerHTML = `<div class="bg-white w-full max-w-4xl max-h-[94vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col"><div class="px-4 py-3 border-b border-slate-200 flex items-start justify-between gap-3"><div class="min-w-0"><div class="font-bold text-slate-900">Hình ảnh sản phẩm</div><div class="text-xs text-slate-500 mt-1 break-words">${escapeHTML(order.item || '-')} • ${escapeHTML(order.productImageFileName || 'Ảnh đã tải lên')}</div></div><button type="button" onclick="closeProductImageViewer()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold">Đóng ✕</button></div><div class="flex-1 min-h-0 overflow-auto bg-slate-50 p-3 flex items-center justify-center"><img src="${escapeHTMLAttribute(imageUrl)}" alt="${escapeHTMLAttribute(order.item || 'Hình ảnh sản phẩm')}" class="max-w-full max-h-[75vh] object-contain rounded-lg bg-white"></div><div class="px-4 py-3 border-t border-slate-200 flex justify-end"><button type="button" onclick='triggerProductImageUpload(${JSON.stringify(String(order.id))}, ${JSON.stringify(context)})' class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold">Đổi ảnh</button></div></div>`;
                 modal.addEventListener('click', event => { if (event.target === modal) closeProductImageViewer(); });
                 document.body.appendChild(modal);
             };
@@ -5324,6 +5326,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             productImageLoadFailed.delete(imageKey);
             await deleteProductImageFromIndexedDB(imageKey).catch(() => {});
             closeProductImageViewer();
+            renderOrders();
             renderStatusTable();
         }
 
@@ -5710,7 +5713,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             if (groupCountEl) groupCountEl.innerText = matchedGroups.length;
 
             if (!matchedGroups.length) {
-                tbody.innerHTML = `<tr><td colspan="11" class="text-center py-8 text-slate-400">Không tìm thấy order nào phù hợp.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="12" class="text-center py-8 text-slate-400">Không tìm thấy order nào phù hợp.</td></tr>`;
                 updateOrderSelectionUI();
                 return;
             }
@@ -5731,7 +5734,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
                 tbody.innerHTML += `
                     <tr class="bg-indigo-50/80 border-b border-indigo-100">
-                        <td colspan="11" class="py-3.5 px-4">
+                        <td colspan="12" class="py-3.5 px-4">
                             <div class="flex flex-wrap items-start justify-between gap-3">
                                 <div class="min-w-0">
                                     <div class="flex flex-wrap items-center gap-2">
@@ -5778,10 +5781,11 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                             </td>
                             <td class="py-3 px-4 font-medium text-slate-500 text-xs">${stt}</td>
                             <td class="py-3 px-4 text-xs font-semibold text-indigo-700 whitespace-nowrap"><span class="inline-flex items-center space-x-1 bg-indigo-50 px-2 py-1 rounded border border-indigo-100"><i data-lucide="calendar" class="w-3 h-3 text-indigo-500"></i><span>${escapeHTML(formatDateVN(o.date))}</span></span></td>
-                            <td class="py-3 px-4 font-semibold ${isPlaced ? 'text-slate-800' : 'text-rose-700'}">
+                            <td class="py-3 px-4 font-semibold ${isPlaced ? 'text-slate-800' : 'text-rose-700'} min-w-[220px]">
                                 <div>${escapeHTML(o.item || '-')}</div>
                                 <div class="flex flex-wrap items-center gap-1.5 mt-1">${statusBadge}${o.orderNumber ? `<span class="text-[10px] text-slate-400">${escapeHTML(o.orderNumber)}</span>` : ''}</div>
                             </td>
+                            ${renderProductImageCell(o, 'orders')}
                             <td class="py-3 px-4 text-slate-600">${escapeHTML(o.unit || '-')}</td>
                             <td class="py-3 px-4 font-bold text-indigo-600">${Number.isFinite(Number(o.qty)) ? escapeHTML(String(o.qty)) : '-'}</td>
                             <td class="py-3 px-4 text-slate-600">${escapeHTML(o.area || '-')}</td>
@@ -10348,29 +10352,34 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             renderAll();
         }
 
-        function getSafeProductImageInputId(itemId) {
-            return `product-image-input-${String(itemId ?? '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        function getSafeProductImageInputId(itemId, context = 'status') {
+            return `product-image-input-${String(context || 'status').replace(/[^a-zA-Z0-9_-]/g, '_')}-${String(itemId ?? '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
         }
 
-        function renderProductImageCell(order) {
+        function renderProductImageCell(order, context = 'status') {
             const itemId = String(order?.id ?? '');
             const imageKey = String(order?.productImageStorageKey || '').trim();
-            const inputId = getSafeProductImageInputId(itemId);
+            const inputId = getSafeProductImageInputId(itemId, context);
             const imageUrl = imageKey ? productImageURLCache.get(imageKey) : '';
             const statusTabVisible = !document.getElementById('tab-status')?.classList.contains('hidden');
+            const ordersTabVisible = !document.getElementById('tab-orders')?.classList.contains('hidden');
             const imageLoadFailed = imageKey && productImageLoadFailed.has(imageKey);
-            if (imageKey && !imageUrl && !imageLoadFailed && statusTabVisible) {
-                loadProductImagePreview(imageKey).then(() => renderStatusTable());
+            if (imageKey && !imageUrl && !imageLoadFailed && (statusTabVisible || ordersTabVisible)) {
+                loadProductImagePreview(imageKey).then(() => {
+                    if (ordersTabVisible) renderOrders();
+                    if (statusTabVisible) renderStatusTable();
+                    if (window.lucide?.createIcons) lucide.createIcons();
+                });
             }
             return `
                 <td class="py-2.5 px-3 min-w-[125px] align-top">
                     <div class="flex flex-col items-start gap-1.5">
                         ${imageUrl
-                            ? `<button type="button" title="Xem ảnh sản phẩm" onclick='viewProductImage(${JSON.stringify(itemId)})' class="block rounded-lg border border-slate-200 overflow-hidden bg-white hover:ring-2 hover:ring-indigo-300"><img src="${escapeHTMLAttribute(imageUrl)}" alt="Ảnh ${escapeHTMLAttribute(order?.item || 'sản phẩm')}" class="w-[72px] h-[72px] object-contain"></button>`
+                            ? `<button type="button" title="Xem ảnh sản phẩm" onclick='viewProductImage(${JSON.stringify(itemId)}, ${JSON.stringify(context)})' class="block rounded-lg border border-slate-200 overflow-hidden bg-white hover:ring-2 hover:ring-indigo-300"><img src="${escapeHTMLAttribute(imageUrl)}" alt="Ảnh ${escapeHTMLAttribute(order?.item || 'sản phẩm')}" class="w-[72px] h-[72px] object-contain"></button>`
                             : `<div class="w-[72px] h-[72px] flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-400"><i data-lucide="image" class="w-5 h-5"></i><span class="text-[9px] mt-1">${imageLoadFailed ? 'Lỗi ảnh' : (imageKey ? 'Đang tải ảnh' : 'Chưa có ảnh')}</span></div>`}
                         <input type="file" id="${inputId}" accept="image/*" class="hidden" onchange='handleProductImageUpload(${JSON.stringify(itemId)}, this)'>
-                        <button type="button" onclick='triggerProductImageUpload(${JSON.stringify(itemId)})' class="px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100 text-[10px] font-semibold whitespace-nowrap">${imageKey ? 'Đổi ảnh' : '+ Thêm ảnh'}</button>
-                        ${imageKey ? `<div class="flex flex-wrap gap-1"><button type="button" onclick='viewProductImage(${JSON.stringify(itemId)})' class="text-[10px] text-violet-700 hover:underline">Xem ảnh</button><button type="button" onclick='removeProductImage(${JSON.stringify(itemId)})' class="text-[10px] text-rose-600 hover:underline">Xóa</button></div>` : ''}
+                        <button type="button" onclick='triggerProductImageUpload(${JSON.stringify(itemId)}, ${JSON.stringify(context)})' class="px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100 text-[10px] font-semibold whitespace-nowrap">${imageKey ? 'Đổi ảnh' : '+ Thêm ảnh'}</button>
+                        ${imageKey ? `<div class="flex flex-wrap gap-1"><button type="button" onclick='viewProductImage(${JSON.stringify(itemId)}, ${JSON.stringify(context)})' class="text-[10px] text-violet-700 hover:underline">Xem ảnh</button><button type="button" onclick='removeProductImage(${JSON.stringify(itemId)})' class="text-[10px] text-rose-600 hover:underline">Xóa</button></div>` : ''}
                     </div>
                 </td>
             `;
