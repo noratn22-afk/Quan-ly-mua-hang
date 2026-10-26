@@ -2144,8 +2144,9 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         function getGroupPlacedSummary(groupItems) {
             const items = Array.isArray(groupItems) ? groupItems : [];
-            const placed = items.filter(o => o?.orderPlaced === true).length;
-            return { placed, total: items.length, label: `${placed}/${items.length} mặt hàng đã đặt` };
+            const placed = items.filter(isOrderConsideredPlaced).length;
+            const delivered = items.filter(isOrderConsideredDelivered).length;
+            return { placed, delivered, total: items.length, label: `${placed}/${items.length} mặt hàng đã đặt` };
         }
 
         // ==========================================================
@@ -2240,6 +2241,51 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 source: 'LEGACY_ITEM',
                 po: null
             };
+        }
+
+        // Business rule: an order with invoice information is already purchased
+        // and treated as received for placement/delivery grouping, even when the
+        // original Excel stage still says "Phát hành hóa đơn" or "Làm ĐNTT".
+        function hasOrderInvoice(order) {
+            const invoice = getOrderInvoiceInfo(order);
+            return Boolean(
+                String(invoice?.invoiceNo ?? '').trim() ||
+                String(invoice?.invoiceDate ?? '').trim()
+            );
+        }
+
+        // Các giai đoạn từ Đặt hàng trở đi đều được xem là Đã đặt.
+        function isPlacedStageValue(stage) {
+            const stageKey = normalizeSearchText(stage || '');
+            return ['dat hang', 'da dat hang', 'da giao hang', 'phat hanh hoa don', 'lam dntt'].includes(stageKey);
+        }
+
+        function isOrderStageConsideredPlaced(order) {
+            if (!order) return false;
+            if (isPlacedStageValue(order.stage)) return true;
+            const linkedPoId = String(order.purchaseOrderId || '').trim();
+            if (!linkedPoId) return false;
+            const linkedPO = (Array.isArray(purchaseOrders) ? purchaseOrders : [])
+                .find(po => String(po?.poId || '') === linkedPoId);
+            return isPlacedStageValue(linkedPO?.stage);
+        }
+
+        function isOrderConsideredPlaced(order) {
+            if (!order) return false;
+            return order.orderPlaced === true ||
+                Boolean(String(order.orderedAt || order.orderPlacedAt || '').trim()) ||
+                isOrderStageConsideredPlaced(order) ||
+                hasOrderInvoice(order);
+        }
+
+        function isOrderConsideredDelivered(order) {
+            const stageKey = normalizeSearchText(order?.stage || '');
+            const deliveryKey = normalizeSearchText(order?.deliveryStatus || '');
+            return stageKey.includes('da giao hang') ||
+                deliveryKey === 'da giao' || deliveryKey === 'da giao hang' ||
+                deliveryKey === 'da nhan hang' ||
+                Boolean(String(order?.deliveredAt || '').trim()) ||
+                hasOrderInvoice(order);
         }
 
         function isPurchaseOrderActive(po) {
@@ -2538,8 +2584,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         function getPurchaseOrderProgress(po) {
             const items = getPurchaseOrderItems(po);
-            const placed = items.filter(o => o?.orderPlaced === true).length;
-            const delivered = items.filter(o => o?.stage === 'Đã giao hàng').length;
+            const placed = items.filter(isOrderActuallyPlaced).length;
+            const delivered = items.filter(isOrderConsideredDelivered).length;
             const totalValue = items.reduce((sum, o) => {
                 const value = getPurchaseValue(o);
                 if (value === null) {
@@ -2604,7 +2650,12 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         // This is intentionally stricter than orderPlaced === true so stale/test
         // data from older workflow versions cannot lock the Tab 4 placement UI.
         function isOrderActuallyPlaced(item) {
-            if (!item || item.orderPlaced !== true) return false;
+            if (!item) return false;
+            // A purchase stage or linked PO stage is authoritative even without a timestamp.
+            if (isOrderStageConsideredPlaced(item)) return true;
+            // An invoice is strong evidence that the purchase has already happened.
+            if (hasOrderInvoice(item)) return true;
+            if (item.orderPlaced !== true) return false;
             const orderedAt = String(item.orderedAt || item.orderPlacedAt || '').trim();
             if (!orderedAt) return false;
             const parsed = new Date(orderedAt);
@@ -2698,8 +2749,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             if (!order) return { ok: false, reason: 'Không tìm thấy item.' };
 
             // Delivered items are never selectable for another placement/PO action.
-            if (order.stage === 'Đã giao hàng') {
-                return { ok: false, reason: 'Đã giao hàng' };
+            if (isOrderConsideredDelivered(order)) {
+                return { ok: false, reason: 'Đã giao hàng / đã có hóa đơn' };
             }
 
             const actuallyPlaced = isOrderActuallyPlaced(order);
@@ -2877,8 +2928,36 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             const nextStage = PURCHASE_ORDER_STAGES.includes(requested) ? requested : 'SSG';
             const currentStage = getPurchaseOrderStage(po);
             if (currentStage === nextStage && po.stage === nextStage) return;
+            const stageTimestamp = getNowISO();
             po.stage = nextStage;
-            po.stageChangedAt = getNowISO();
+            po.stageChangedAt = stageTimestamp;
+            getPurchaseOrderItems(po).forEach(item => {
+                const oldItemStage = String(item.stage || 'SSG');
+                if (oldItemStage !== nextStage) {
+                    item.stage = nextStage;
+                    item.stageChangedAt = stageTimestamp;
+                    item.stageTimes = (item.stageTimes && typeof item.stageTimes === 'object') ? item.stageTimes : {};
+                    item.stageTimes[nextStage] = stageTimestamp;
+                    pushTrackingHistory(item, 'stage_change', {
+                        fromStage: oldItemStage,
+                        toStage: nextStage,
+                        message: 'Đồng bộ giai đoạn từ Tab 4 / PO'
+                    }, item.by || 'Ngọc', stageTimestamp);
+                }
+                if (isPlacedStageValue(nextStage)) {
+                    item.orderPlaced = true;
+                    if (!String(item.orderedAt || item.orderPlacedAt || '').trim()) {
+                        item.orderedAt = stageTimestamp;
+                        item.orderPlacedAt = stageTimestamp;
+                    }
+                    item.orderedBy = item.orderedBy || po.createdBy || 'Ngọc';
+                }
+                if (normalizeSearchText(nextStage) === 'da giao hang') {
+                    item.deliveredAt = item.deliveredAt || stageTimestamp;
+                    item.deliveryStatus = 'Đã giao';
+                    item.deliveryUpdatedAt = stageTimestamp;
+                }
+            });
             syncPurchaseOrderReferences();
             syncAllPurchaseOrderStatuses();
             saveToStorage().then(saved => {
@@ -3090,6 +3169,12 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             const currentSupplier = String(item?.supplier || '').trim();
             const storedType = getOrderPlacementPurchaseType(item);
 
+            // Invoiced/delivered items must not re-enter the PO placement flow,
+            // even if importing from Excel removed their old PO linkage.
+            if (isOrderConsideredDelivered(item)) {
+                return { ok: false, reason: 'Đã giao hàng / đã có hóa đơn' };
+            }
+
             // Special recovery workflow: an item that was already purchased but
             // no longer has a valid PO can be selected to CREATE/LINK a PO.
             // This must not reset orderPlaced, orderedAt or purchasePrice.
@@ -3101,10 +3186,6 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     return { ok: false, reason: `Hình thức hiện tại là ${storedType}` };
                 }
                 return { ok: true, reason: 'Đã mua • chưa có PO' };
-            }
-
-            if (item.stage === 'Đã giao hàng') {
-                return { ok: false, reason: 'Đã giao hàng' };
             }
 
             const base = canItemJoinPurchaseOrder(item);
@@ -4833,7 +4914,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 invoiceDate: source.invoiceDate ? (function(){ try { const r=parseExcelDate(source.invoiceDate); return r.valid ? r.value : ''; } catch(e){ return ''; } })() : '',
                 stageTimes: (source.stageTimes && typeof source.stageTimes === 'object' && !Array.isArray(source.stageTimes)) ? source.stageTimes : {},
                 stageChangedAt: String(source.stageChangedAt ?? ''),
-                orderPlaced: source.orderPlaced === true || Boolean(source.orderedAt || source.orderPlacedAt),
+                orderPlaced: source.orderPlaced === true || Boolean(source.orderedAt || source.orderPlacedAt) || isPlacedStageValue(source.stage),
                 orderedAt: String(source.orderedAt ?? source.orderPlacedAt ?? ''),
                 orderPlacedAt: String(source.orderPlacedAt ?? source.orderedAt ?? ''),
                 orderedBy: String(source.orderedBy ?? source.orderByPlaced ?? ''),
@@ -4878,6 +4959,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         let storageSaveQueue = Promise.resolve(true);
         let lastPersistedJson = {};
         let quoteFileDBPromise = null;
+        let productImageDBPromise = null;
+        const productImageURLCache = new Map();
+        const productImageLoadPromises = new Map();
+        const productImageLoadFailed = new Set();
 
         function sanitizeQuotesForStorage(sourceQuotes) {
             return (Array.isArray(sourceQuotes) ? sourceQuotes : []).map(q => {
@@ -5051,6 +5136,195 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 tx.onerror = () => reject(tx.error || new Error('Không thể xóa file báo giá khỏi IndexedDB.'));
                 tx.onabort = () => reject(tx.error || new Error('Giao dịch xóa file đã bị hủy.'));
             }));
+        }
+
+        function openProductImageDB() {
+            if (productImageDBPromise) return productImageDBPromise;
+            if (typeof indexedDB === 'undefined') {
+                productImageDBPromise = Promise.reject(new Error('IndexedDB không được trình duyệt hỗ trợ.'));
+                return productImageDBPromise;
+            }
+            productImageDBPromise = new Promise((resolve, reject) => {
+                const request = indexedDB.open('ProcureFlowProductImageDB', 1);
+                request.onupgradeneeded = () => {
+                    const db = request.result;
+                    if (!db.objectStoreNames.contains('productImages')) db.createObjectStore('productImages', { keyPath: 'imageId' });
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error || new Error('Không thể mở bộ nhớ ảnh sản phẩm.'));
+            });
+            return productImageDBPromise;
+        }
+
+        function putProductImageToIndexedDB(imageId, blob, meta = {}) {
+            return openProductImageDB().then(db => new Promise((resolve, reject) => {
+                const tx = db.transaction('productImages', 'readwrite');
+                tx.objectStore('productImages').put({ imageId, itemId: String(meta.itemId ?? ''), fileName: String(meta.fileName ?? ''), fileType: String(meta.fileType ?? blob?.type ?? 'image/jpeg'), fileSize: Number(meta.fileSize ?? blob?.size ?? 0), fileBlob: blob, savedAt: new Date().toISOString() });
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error || new Error('Không thể lưu ảnh sản phẩm vào bộ nhớ file.'));
+                tx.onabort = () => reject(tx.error || new Error('Lưu ảnh sản phẩm đã bị hủy.'));
+            }));
+        }
+
+        function getProductImageFromIndexedDB(imageId) {
+            return openProductImageDB().then(db => new Promise((resolve, reject) => {
+                const tx = db.transaction('productImages', 'readonly');
+                const request = tx.objectStore('productImages').get(String(imageId));
+                request.onsuccess = () => resolve(request.result || null);
+                request.onerror = () => reject(request.error || new Error('Không thể đọc ảnh sản phẩm.'));
+            }));
+        }
+
+        function deleteProductImageFromIndexedDB(imageId) {
+            if (!imageId) return Promise.resolve(true);
+            return openProductImageDB().then(db => new Promise((resolve, reject) => {
+                const tx = db.transaction('productImages', 'readwrite');
+                tx.objectStore('productImages').delete(String(imageId));
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error || new Error('Không thể xóa ảnh sản phẩm.'));
+                tx.onabort = () => reject(tx.error || new Error('Xóa ảnh sản phẩm đã bị hủy.'));
+            }));
+        }
+
+        function compressProductImageFile(file) {
+            return new Promise((resolve, reject) => {
+                const objectUrl = URL.createObjectURL(file);
+                const image = new Image();
+                const cleanup = () => URL.revokeObjectURL(objectUrl);
+                image.onload = () => {
+                    try {
+                        const maxSide = 720;
+                        const rawWidth = image.naturalWidth || image.width;
+                        const rawHeight = image.naturalHeight || image.height;
+                        const scale = Math.min(1, maxSide / Math.max(rawWidth, rawHeight));
+                        const width = Math.max(1, Math.round(rawWidth * scale));
+                        const height = Math.max(1, Math.round(rawHeight * scale));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const context = canvas.getContext('2d', { alpha: false });
+                        if (!context) throw new Error('Trình duyệt không xử lý được ảnh này.');
+                        context.fillStyle = '#ffffff';
+                        context.fillRect(0, 0, width, height);
+                        context.drawImage(image, 0, 0, width, height);
+                        canvas.toBlob(blob => {
+                            cleanup();
+                            if (!blob) reject(new Error('Không thể nén ảnh. Hãy thử ảnh PNG hoặc JPG khác.'));
+                            else resolve(blob);
+                        }, 'image/jpeg', 0.68);
+                    } catch (error) { cleanup(); reject(error); }
+                };
+                image.onerror = () => { cleanup(); reject(new Error('Không đọc được ảnh đã chọn.')); };
+                image.src = objectUrl;
+            });
+        }
+
+        function loadProductImagePreview(imageId) {
+            const key = String(imageId || '');
+            if (!key) return Promise.resolve('');
+            if (productImageURLCache.has(key)) return Promise.resolve(productImageURLCache.get(key));
+            if (productImageLoadFailed.has(key)) return Promise.resolve('');
+            if (productImageLoadPromises.has(key)) return productImageLoadPromises.get(key);
+            const pending = getProductImageFromIndexedDB(key).then(record => {
+                if (!record?.fileBlob) { productImageLoadFailed.add(key); return ''; }
+                const url = URL.createObjectURL(record.fileBlob);
+                productImageURLCache.set(key, url);
+                return url;
+            }).catch(error => {
+                console.warn('[ProcureFlow] Không tải được ảnh sản phẩm:', error);
+                productImageLoadFailed.add(key);
+                return '';
+            }).finally(() => productImageLoadPromises.delete(key));
+            productImageLoadPromises.set(key, pending);
+            return pending;
+        }
+
+        function triggerProductImageUpload(itemId) {
+            const input = document.getElementById(getSafeProductImageInputId(itemId));
+            if (input) input.click();
+        }
+
+        async function handleProductImageUpload(itemId, input) {
+            const file = input?.files?.[0];
+            if (input) input.value = '';
+            if (!file) return;
+            if (!String(file.type || '').startsWith('image/')) { alert('Vui lòng chọn file hình ảnh (JPG, PNG, WEBP...).'); return; }
+            if (file.size > 20 * 1024 * 1024) { alert('Ảnh gốc lớn hơn 20 MB. Vui lòng chọn ảnh nhỏ hơn.'); return; }
+            const order = orders.find(item => String(item.id) === String(itemId));
+            if (!order) { alert('Không tìm thấy mặt hàng để gắn hình ảnh.'); return; }
+            const oldKey = String(order.productImageStorageKey || '');
+            const oldName = String(order.productImageFileName || '');
+            const oldStorage = String(order.productImageStorage || '');
+            let newKey = '';
+            try {
+                const blob = await compressProductImageFile(file);
+                newKey = `PIMG-${String(itemId).replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                await putProductImageToIndexedDB(newKey, blob, { itemId, fileName: file.name, fileType: blob.type, fileSize: blob.size });
+                order.productImageStorageKey = newKey;
+                order.productImageFileName = file.name;
+                order.productImageStorage = 'IndexedDB';
+                const saved = await saveToStorage();
+                if (!saved) {
+                    order.productImageStorageKey = oldKey; order.productImageFileName = oldName; order.productImageStorage = oldStorage;
+                    await deleteProductImageFromIndexedDB(newKey).catch(() => {});
+                    return;
+                }
+                if (oldKey && oldKey !== newKey) {
+                    const oldUrl = productImageURLCache.get(oldKey);
+                    if (oldUrl) URL.revokeObjectURL(oldUrl);
+                    productImageURLCache.delete(oldKey);
+                    productImageLoadFailed.delete(oldKey);
+                    await deleteProductImageFromIndexedDB(oldKey).catch(() => {});
+                }
+                productImageLoadFailed.delete(newKey);
+                productImageURLCache.set(newKey, URL.createObjectURL(blob));
+                closeProductImageViewer();
+                renderStatusTable();
+                if (window.lucide?.createIcons) lucide.createIcons();
+            } catch (error) {
+                if (newKey) await deleteProductImageFromIndexedDB(newKey).catch(() => {});
+                alert(`Không thể lưu ảnh sản phẩm.\n\n${error?.message || error}`);
+            }
+        }
+
+        function viewProductImage(itemId) {
+            const order = orders.find(item => String(item.id) === String(itemId));
+            if (!order) return;
+            const imageKey = String(order.productImageStorageKey || '');
+            if (!imageKey) { alert('Mặt hàng này chưa có hình ảnh.'); return; }
+            const show = imageUrl => {
+                if (!imageUrl) { alert('Không tải được ảnh. Hãy tải ảnh lên lại.'); return; }
+                document.getElementById('product-image-viewer-modal')?.remove();
+                const modal = document.createElement('div');
+                modal.id = 'product-image-viewer-modal';
+                modal.className = 'fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4';
+                modal.innerHTML = `<div class="bg-white w-full max-w-4xl max-h-[94vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col"><div class="px-4 py-3 border-b border-slate-200 flex items-start justify-between gap-3"><div class="min-w-0"><div class="font-bold text-slate-900">Hình ảnh sản phẩm</div><div class="text-xs text-slate-500 mt-1 break-words">${escapeHTML(order.item || '-')} • ${escapeHTML(order.productImageFileName || 'Ảnh đã tải lên')}</div></div><button type="button" onclick="closeProductImageViewer()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold">Đóng ✕</button></div><div class="flex-1 min-h-0 overflow-auto bg-slate-50 p-3 flex items-center justify-center"><img src="${escapeHTMLAttribute(imageUrl)}" alt="${escapeHTMLAttribute(order.item || 'Hình ảnh sản phẩm')}" class="max-w-full max-h-[75vh] object-contain rounded-lg bg-white"></div><div class="px-4 py-3 border-t border-slate-200 flex justify-end"><button type="button" onclick='triggerProductImageUpload(${JSON.stringify(String(order.id))})' class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold">Đổi ảnh</button></div></div>`;
+                modal.addEventListener('click', event => { if (event.target === modal) closeProductImageViewer(); });
+                document.body.appendChild(modal);
+            };
+            const cached = productImageURLCache.get(imageKey);
+            if (cached) show(cached); else loadProductImagePreview(imageKey).then(show);
+        }
+
+        function closeProductImageViewer() { document.getElementById('product-image-viewer-modal')?.remove(); }
+
+        async function removeProductImage(itemId) {
+            const order = orders.find(item => String(item.id) === String(itemId));
+            if (!order) return;
+            const imageKey = String(order.productImageStorageKey || '');
+            if (!imageKey) return;
+            if (!confirm(`Xóa hình ảnh của mặt hàng "${order.item || '-'}"?`)) return;
+            const old = { productImageStorageKey: order.productImageStorageKey || '', productImageFileName: order.productImageFileName || '', productImageStorage: order.productImageStorage || '' };
+            order.productImageStorageKey = ''; order.productImageFileName = ''; order.productImageStorage = '';
+            const saved = await saveToStorage();
+            if (!saved) { Object.assign(order, old); return; }
+            const oldUrl = productImageURLCache.get(imageKey);
+            if (oldUrl) URL.revokeObjectURL(oldUrl);
+            productImageURLCache.delete(imageKey);
+            productImageLoadFailed.delete(imageKey);
+            await deleteProductImageFromIndexedDB(imageKey).catch(() => {});
+            closeProductImageViewer();
+            renderStatusTable();
         }
 
         async function migrateLegacyQuoteFilesToIndexedDB() {
@@ -5468,6 +5742,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                     <div class="flex flex-wrap items-center gap-2 mt-2">
                                         <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-white text-slate-700 border border-slate-200 text-[11px] font-semibold">${group.items.length} mặt hàng</span>
                                         <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[11px] font-semibold">${placedSummary.placed} Đã đặt</span>
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-100 text-[11px] font-semibold">${placedSummary.delivered} Đã nhận hàng / có hóa đơn</span>
                                         <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[11px] font-semibold">${placedSummary.total - placedSummary.placed} Chưa đặt</span>
                                         <span class="text-[11px] font-semibold text-slate-400">${placedPct}% hoàn tất</span>
                                         <div class="flex flex-wrap items-center gap-1.5">${poHtml}</div>
@@ -5480,7 +5755,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
                 group.items.forEach((o, idx) => {
                     stt += 1;
-                    const isPlaced = o?.orderPlaced === true;
+                    const isDelivered = isOrderConsideredDelivered(o);
+                    const isPlaced = isOrderConsideredPlaced(o);
                     const rowClass = isPlaced
                         ? `hover:bg-slate-50/80 transition ${idx === 0 ? 'border-t-2 border-indigo-100' : ''}`
                         : `bg-rose-50/60 hover:bg-rose-50 transition border-l-4 border-rose-400 ${idx === 0 ? 'border-t-2 border-indigo-100' : ''}`;
@@ -5490,7 +5766,9 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         ? `<button type="button" onclick='openPODetailModal(${JSON.stringify(currentPO.poId)})' class="inline-flex items-center px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100 text-[11px] font-semibold">${escapeHTML(currentPO.poNumber || currentPO.poId)}</button>`
                         : '<span class="text-slate-400">Chưa có</span>';
                     const statusBadge = isPlaced
-                        ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-semibold">🟢 Đã đặt</span>'
+                        ? (isDelivered
+                            ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100 text-[10px] font-semibold">✓ Đã đặt • Đã nhận hàng</span>'
+                            : '<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-semibold">🟢 Đã đặt</span>')
                         : '<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold">🔴 Chưa đặt</span>';
 
                     tbody.innerHTML += `
@@ -6036,10 +6314,9 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         }
 
         function getOrderPlacementFilterMatch(order, filter) {
-            // Filter "Đã đặt" dùng đúng cờ orderPlaced, không phụ thuộc orderedAt.
-            const placed = order?.orderPlaced === true;
-            // Filter "Đã giao" / "Chưa giao" chỉ dựa trên stage.
-            const delivered = order?.stage === 'Đã giao hàng';
+            // Có hóa đơn được tính là đã đặt và đã nhận hàng.
+            const placed = order?.orderPlaced === true || hasOrderInvoice(order);
+            const delivered = isOrderConsideredDelivered(order);
 
             if (filter === 'Chưa đặt') return !placed;
             if (filter === 'Đã đặt') return placed;
@@ -6064,10 +6341,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     node.textContent = '';
                     return;
                 }
-                if (order.stage === 'Đã giao hàng') {
+                if (isOrderConsideredDelivered(order)) {
                     node.textContent = order.deliveredAt && new Date(order.deliveredAt).getTime() >= new Date(start).getTime()
                         ? `⏱ Thời gian từ đặt → giao: ${formatElapsedTime(start, order.deliveredAt)}`
-                        : `⏱ Đã chờ: ${formatElapsedTime(start)}`;
+                        : '✓ Đã nhận hàng / đã có hóa đơn';
                     return;
                 }
                 node.textContent = `⏱ Đã chờ: ${formatElapsedTime(start)}`;
@@ -6731,7 +7008,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 filteredItems.forEach((o, idx) => {
                     ensureOrderTrackingFields(o);
                     const placed = o.orderPlaced === true && !!o.orderedAt;
-                    const delivered = o.stage === 'Đã giao hàng';
+                    const delivered = isOrderConsideredDelivered(o);
                     const elapsedStatus = placed ? getOrderElapsedStatus(o.orderedAt) : null;
                     const statusBadge = delivered
                         ? '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-indigo-50 text-indigo-700 border-indigo-200">✓ Đã giao</span>'
@@ -9961,8 +10238,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             const visible = Array.isArray(visibleItems) ? visibleItems : [];
             const all = Array.isArray(allItems) ? allItems : visible;
             const total = all.length;
-            const placed = all.filter(o => o?.orderPlaced === true).length;
-            const delivered = all.filter(o => o?.stage === 'Đã giao hàng').length;
+            const placed = all.filter(isOrderActuallyPlaced).length;
+            const delivered = all.filter(isOrderConsideredDelivered).length;
             const invoiceNo = String(po?.invoiceNo ?? '').trim();
             const invoiceDate = normalizeInvoiceDateValue(po?.invoiceDate);
             const orderLabels = [...new Map(all.map(o => {
@@ -10071,8 +10348,46 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             renderAll();
         }
 
+        function getSafeProductImageInputId(itemId) {
+            return `product-image-input-${String(itemId ?? '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        }
+
+        function renderProductImageCell(order) {
+            const itemId = String(order?.id ?? '');
+            const imageKey = String(order?.productImageStorageKey || '').trim();
+            const inputId = getSafeProductImageInputId(itemId);
+            const imageUrl = imageKey ? productImageURLCache.get(imageKey) : '';
+            const statusTabVisible = !document.getElementById('tab-status')?.classList.contains('hidden');
+            const imageLoadFailed = imageKey && productImageLoadFailed.has(imageKey);
+            if (imageKey && !imageUrl && !imageLoadFailed && statusTabVisible) {
+                loadProductImagePreview(imageKey).then(() => renderStatusTable());
+            }
+            return `
+                <td class="py-2.5 px-3 min-w-[125px] align-top">
+                    <div class="flex flex-col items-start gap-1.5">
+                        ${imageUrl
+                            ? `<button type="button" title="Xem ảnh sản phẩm" onclick='viewProductImage(${JSON.stringify(itemId)})' class="block rounded-lg border border-slate-200 overflow-hidden bg-white hover:ring-2 hover:ring-indigo-300"><img src="${escapeHTMLAttribute(imageUrl)}" alt="Ảnh ${escapeHTMLAttribute(order?.item || 'sản phẩm')}" class="w-[72px] h-[72px] object-contain"></button>`
+                            : `<div class="w-[72px] h-[72px] flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-400"><i data-lucide="image" class="w-5 h-5"></i><span class="text-[9px] mt-1">${imageLoadFailed ? 'Lỗi ảnh' : (imageKey ? 'Đang tải ảnh' : 'Chưa có ảnh')}</span></div>`}
+                        <input type="file" id="${inputId}" accept="image/*" class="hidden" onchange='handleProductImageUpload(${JSON.stringify(itemId)}, this)'>
+                        <button type="button" onclick='triggerProductImageUpload(${JSON.stringify(itemId)})' class="px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100 text-[10px] font-semibold whitespace-nowrap">${imageKey ? 'Đổi ảnh' : '+ Thêm ảnh'}</button>
+                        ${imageKey ? `<div class="flex flex-wrap gap-1"><button type="button" onclick='viewProductImage(${JSON.stringify(itemId)})' class="text-[10px] text-violet-700 hover:underline">Xem ảnh</button><button type="button" onclick='removeProductImage(${JSON.stringify(itemId)})' class="text-[10px] text-rose-600 hover:underline">Xóa</button></div>` : ''}
+                    </div>
+                </td>
+            `;
+        }
+
+        function renderStatusItemActionsCell(o) {
+            const placed = isOrderActuallyPlaced(o);
+            return `
+                <td class="py-3 px-3 text-right min-w-[150px]">
+                    <button type="button" onclick="${placed ? `openOrderPlacementActions(${JSON.stringify(o.id)})` : `openOrderPlacementConfirmation(${JSON.stringify(o.id)})`}" class="inline-flex items-center px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg">${placed ? 'Chi tiết' : 'Đặt hàng'}</button>
+                    <button type="button" onclick="openDeliveryStatusModal(${JSON.stringify(o.id)})" class="inline-flex items-center px-2.5 py-1.5 mt-1 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200">Giao hàng</button>
+                </td>
+            `;
+        }
+
         function renderStatusItemRow(o, index, po = null) {
-            const placed = o.orderPlaced === true;
+            const placed = isOrderActuallyPlaced(o);
             const overdueInfo = getStatusItemOverdueInfo(o, po);
             const value = Number.isFinite(Number(o.purchaseValue))
                 ? Number(o.purchaseValue)
@@ -10086,16 +10401,13 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         <div>${escapeHTML(o.item || '-')}</div>
                         ${overdueInfo.overdue ? renderOverdueWarningHTML(overdueInfo, true) : ''}
                     </td>
+                    ${renderProductImageCell(o)}
                     <td class="py-3 px-3 text-slate-600 whitespace-nowrap">${escapeHTML(o.unit || '-')}</td>
                     <td class="py-3 px-3 font-bold text-indigo-600 text-right">${Number.isFinite(Number(o.qty)) ? escapeHTML(String(o.qty)) : '-'}</td>
                     <td class="py-3 px-3 text-slate-700 min-w-[140px]">${escapeHTML(o.supplier || '-')}</td>
                     <td class="py-3 px-3 text-right min-w-[120px]">
                         <div class="font-semibold text-slate-800">${value !== null ? escapeHTML(formatPurchaseMoney(value)) : '-'}</div>
                         ${Number.isFinite(Number(o.purchasePrice)) ? `<div class="text-[10px] text-slate-400 mt-0.5">Đơn giá: ${escapeHTML(formatPurchaseMoney(o.purchasePrice))}</div>` : ''}
-                    </td>
-                    <td class="py-3 px-3 text-right min-w-[150px]">
-                        <button type="button" onclick="${placed ? `openOrderPlacementActions(${JSON.stringify(o.id)})` : `openOrderPlacementConfirmation(${JSON.stringify(o.id)})`}" class="inline-flex items-center px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg">${placed ? 'Chi tiết' : 'Đặt hàng'}</button>
-                        <button type="button" onclick="openDeliveryStatusModal(${JSON.stringify(o.id)})" class="inline-flex items-center px-2.5 py-1.5 mt-1 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200">Giao hàng</button>
                     </td>
                 </tr>
             `;
@@ -10251,8 +10563,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             return rows.map((o, idx) => {
                 const rowHtml = renderStatusItemRow(o, idx, po);
                 const rowOpen = rowHtml.replace(/\s*<\/tr>\s*$/, '');
-                if (idx !== 0 || !po) return `${rowOpen}</tr>`;
-                return `${rowOpen}${renderStatusPOStageCell(po, info, rows.length)}${renderStatusPOInvoiceCell(po, allItems)}<\/tr>`;
+                const sharedCells = idx === 0 && po
+                    ? `${renderStatusPOStageCell(po, info, rows.length)}${renderStatusPOInvoiceCell(po, allItems)}`
+                    : '';
+                return `${rowOpen}${sharedCells}${renderStatusItemActionsCell(o)}</tr>`;
             }).join('');
         }
 
@@ -10301,13 +10615,14 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     </div>
 
                     <div class="overflow-x-auto">
-                        <table class="w-full min-w-[1080px] text-left border-collapse text-sm">
+                        <table class="w-full min-w-[1320px] text-left border-collapse text-sm">
                             <thead class="bg-white border-b border-slate-200">
                                 <tr class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">
                                     <th class="py-2.5 px-3 w-12 text-center">STT</th>
                                     <th class="py-2.5 px-3">Ngày Order</th>
                                     <th class="py-2.5 px-3">From</th>
                                     <th class="py-2.5 px-3">Mặt hàng</th>
+                                    <th class="py-2.5 px-3">Hình ảnh SP</th>
                                     <th class="py-2.5 px-3">ĐVT</th>
                                     <th class="py-2.5 px-3 text-right">SL</th>
                                     <th class="py-2.5 px-3">NCC</th>
@@ -10368,7 +10683,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         }
 
         function getStatusNoPOCategory(item) {
-            return item?.orderPlaced === true ? 'PURCHASED_NO_PO' : 'NOT_PURCHASED';
+            return isOrderActuallyPlaced(item) ? 'PURCHASED_NO_PO' : 'NOT_PURCHASED';
         }
 
         function renderStatusNoPOBlock(items, category) {
@@ -10401,7 +10716,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         </div>
                     </div>
                     <div class="overflow-x-auto">
-                        <table class="w-full min-w-[980px] text-left border-collapse text-sm">
+                        <table class="w-full min-w-[1120px] text-left border-collapse text-sm">
                             <thead class="bg-white border-b border-slate-200">
                                 <tr class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">
                                     <th class="py-2.5 px-3 w-12 text-center">Chọn</th>
@@ -10409,6 +10724,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                     <th class="py-2.5 px-3">Ngày Order</th>
                                     <th class="py-2.5 px-3">From</th>
                                     <th class="py-2.5 px-3">Mặt hàng</th>
+                                    <th class="py-2.5 px-3">Hình ảnh SP</th>
                                     <th class="py-2.5 px-3">NCC</th>
                                     <th class="py-2.5 px-3">Hình thức</th>
                                     <th class="py-2.5 px-3 text-right">Giá mua</th>
@@ -10419,7 +10735,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                 ${items.map((o, idx) => {
                                     const checked = statusNoPOSelectedIds.has(String(o.id));
                                     const overdueInfo = overdueByItemId.get(String(o.id)) || getStatusItemOverdueInfo(o, null);
-                                    const disabled = o.orderPlaced !== true && o.stage === 'Đã giao hàng';
+                                    const disabled = isOrderConsideredDelivered(o);
                                     const price = Number.isFinite(Number(o.purchasePrice)) ? formatPurchaseMoney(o.purchasePrice) : '-';
                                     const placedAt = o.orderedAt ? formatDateTimeVN(o.orderedAt) : '';
                                     return `
@@ -10434,6 +10750,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                                 <div>${escapeHTML(o.item || '-')}</div>
                                                 ${overdueInfo.overdue ? renderOverdueWarningHTML(overdueInfo, true) : ''}
                                             </td>
+                                            ${renderProductImageCell(o)}
                                             <td class="py-3 px-3 text-xs text-slate-700 min-w-[130px]">${escapeHTML(o.supplier || '-')}</td>
                                             <td class="py-3 px-3 text-xs text-slate-600">${escapeHTML(getOrderPlacementPurchaseType(o) || '-')}</td>
                                             <td class="py-3 px-3 text-xs text-right font-semibold text-slate-800">${escapeHTML(price)}</td>
@@ -10529,20 +10846,20 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             if (!isHasPOFilter && !isStatusPOFilter && !isConcretePO) {
                 if (!hasSearch || searchMode === 'ITEM' || ['FROM', 'DATE', 'DOCUMENT', 'SUPPLIER'].includes(searchMode)) {
                     if (isPurchasedNoPOFilter) {
-                        const items = noPO.filter(item => item.orderPlaced === true);
+                        const items = noPO.filter(isOrderActuallyPlaced);
                         if (items.length) {
                             blocks.push({ type: 'NO_PO_PURCHASED', items });
                             renderedItems += items.length;
                         }
                     } else if (isNotPurchasedFilter) {
-                        const items = noPO.filter(item => item.orderPlaced !== true);
+                        const items = noPO.filter(item => !isOrderActuallyPlaced(item));
                         if (items.length) {
                             blocks.push({ type: 'NO_PO_NOT_PURCHASED', items });
                             renderedItems += items.length;
                         }
                     } else if (isNoPOFilter || !hasSearch || searchMode === 'ITEM') {
-                        const purchasedItems = noPO.filter(item => item.orderPlaced === true);
-                        const notPurchasedItems = noPO.filter(item => item.orderPlaced !== true);
+                        const purchasedItems = noPO.filter(isOrderActuallyPlaced);
+                        const notPurchasedItems = noPO.filter(item => !isOrderActuallyPlaced(item));
                         if (purchasedItems.length) {
                             blocks.push({ type: 'NO_PO_PURCHASED', items: purchasedItems });
                             renderedItems += purchasedItems.length;
@@ -10608,6 +10925,14 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             order.stage = val;
             order.stageChangedAt = timestamp;
             order.stageTimes[val] = timestamp;
+            if (isPlacedStageValue(val)) {
+                order.orderPlaced = true;
+                if (!String(order.orderedAt || order.orderPlacedAt || '').trim()) {
+                    order.orderedAt = timestamp;
+                    order.orderPlacedAt = timestamp;
+                }
+                order.orderedBy = order.orderedBy || order.by || 'Ngọc';
+            }
 
             if (val === 'Đã giao hàng' && oldStage !== 'Đã giao hàng') {
                 order.deliveredAt = timestamp;
@@ -10828,7 +11153,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             };
             if (ids.total) ids.total.innerText = filteredList.length;
             if (ids.processing) ids.processing.innerText = filteredList.filter(o => o.stage === 'SSG' || o.stage === 'Đặt hàng').length;
-            if (ids.delivered) ids.delivered.innerText = filteredList.filter(o => o.stage === 'Đã giao hàng').length;
+            if (ids.delivered) ids.delivered.innerText = filteredList.filter(isOrderConsideredDelivered).length;
             if (ids.invoiced) ids.invoiced.innerText = filteredList.filter(o => o.stage === 'Phát hành Hóa đơn' || o.stage === 'Làm ĐNTT').length;
             if (ids.purchaseValue) ids.purchaseValue.innerText = formatPurchaseMoney(totalPurchaseValue) || '0 VNĐ';
             if (ids.pricedCount) ids.pricedCount.innerText = `${pricedItems.length} / ${dnmhItems.length}`;
@@ -11466,6 +11791,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 const importGroups = new Map();
                 const sourceSheet = pendingExcelImport.sheetName;
                 const sourceFile = pendingExcelImport.fileName;
+                const previousProductImageKeys = [...new Set(orders.map(order => String(order?.productImageStorageKey || '').trim()).filter(Boolean))];
 
                 const importedOrders = rowsToImport.map((row) => {
                     const id = createSafeOrderId(usedIds);
@@ -11475,10 +11801,16 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     if (!importGroups.has(groupKey)) importGroups.set(groupKey, explicitGroup || createOrderGroupId(row.data.date));
                     const orderGroupId = importGroups.get(groupKey);
                     const importedStage = String(row.data.stage || 'SSG').trim() || 'SSG';
-                    const placedDate = String(row.data.orderTime || '').trim();
                     const stageKey = normalizeSearchText(importedStage);
-                    const isDelivered = stageKey.includes('da giao');
-                    const isPlaced = Boolean(placedDate) || ['dat hang', 'da giao hang', 'phat hanh hoa don', 'lam dntt'].includes(stageKey);
+                    const invoiceNo = String(row.data.invoiceNo || '').trim();
+                    const hasInvoice = Boolean(invoiceNo);
+                    const sourceOrderTime = String(row.data.orderTime || '').trim();
+                    const isPlaced = Boolean(sourceOrderTime) || hasInvoice || isPlacedStageValue(importedStage);
+                    // If the sheet only has "Ngày Order", use that as the placed timestamp
+                    // for records known to be placed; don't mark an SSG row as placed just
+                    // because it has a request date.
+                    const placedDate = sourceOrderTime || (isPlaced ? String(row.data.date || '').trim() : '');
+                    const isDelivered = stageKey.includes('da giao hang') || (isPlaced && hasInvoice);
 
                     return {
                         id,
@@ -11499,13 +11831,13 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         purchasePrice: row.data.purchasePrice,
                         purchaseValue: row.data.purchaseValue,
                         purchasePriceSource: row.data.purchasePrice !== null && row.data.purchasePrice !== undefined ? 'Manual' : '',
-                        invoiceNo: row.data.invoiceNo || '',
+                        invoiceNo,
                         invoiceDate: '',
                         stageTimes: {},
                         orderPlaced: isPlaced,
                         orderedAt: placedDate,
                         orderPlacedAt: placedDate,
-                        deliveredAt: isDelivered ? placedDate : '',
+                        deliveredAt: stageKey.includes('da giao hang') ? placedDate : '',
                         stageChangedAt: '',
                         deliveryStatus: isDelivered ? 'Đã giao' : 'Chưa giao',
                         deliveryUpdatedAt: '',
@@ -11547,6 +11879,13 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 const loadedCount = importedOrders.length;
                 saveToStorage().then(ok => {
                     if (ok === false) throw new Error('Không lưu được dữ liệu thay thế vào bộ nhớ trình duyệt.');
+                    previousProductImageKeys.forEach(imageKey => {
+                        const cachedUrl = productImageURLCache.get(imageKey);
+                        if (cachedUrl) URL.revokeObjectURL(cachedUrl);
+                        productImageURLCache.delete(imageKey);
+                        productImageLoadFailed.delete(imageKey);
+                        void deleteProductImageFromIndexedDB(imageKey).catch(() => {});
+                    });
                     renderAll();
                     closeExcelImportPreview();
                     alert(
