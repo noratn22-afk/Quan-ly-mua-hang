@@ -167,7 +167,8 @@
                     <div class="flex flex-wrap items-center gap-2 mr-2">
                         <button id="merge-orders-btn" onclick="mergeSelectedOrderItems()" disabled class="inline-flex items-center px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-lg transition"> Gộp thành 1 đơn</button>
                         <button id="split-orders-btn" onclick="splitSelectedOrderItems()" disabled class="inline-flex items-center px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-lg transition"> Tách khỏi đơn</button>
-                        <button onclick="clearOrderSelection()" class="inline-flex items-center px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition">Bỏ chọn</button>
+                        <button type="button" onclick="selectAllVisibleOrderItems()" class="inline-flex items-center px-2.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold rounded-lg transition" title="Chọn tất cả mặt hàng đang hiển thị theo bộ lọc / tìm kiếm">Chọn tất cả</button>
+                        <button onclick="clearOrderSelection()" class="inline-flex items-center px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition" title="Bỏ chọn toàn bộ mặt hàng đã chọn">Bỏ chọn tất cả</button>
                     </div>
                     <span id="order-selection-count" class="text-xs text-slate-500 mr-2">Chọn nhiều mặt hàng để gộp / tách đơn</span>
                     <button onclick="document.getElementById('excel-file-input').click()" class="inline-flex items-center px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg shadow-sm transition">
@@ -187,7 +188,7 @@
                     <table class="w-full text-left border-collapse">
                         <thead class="sticky top-0 bg-slate-100 z-10 shadow-xs">
                             <tr class="text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
-                                <th class="py-3.5 px-4 w-12"></th>
+                                <th class="py-3.5 px-4 w-12 text-center"><input id="select-all-order-items" type="checkbox" class="w-4 h-4 accent-indigo-600 cursor-pointer" onchange="toggleSelectAllVisibleOrderItems(this.checked)" title="Chọn / bỏ chọn tất cả mặt hàng đang hiển thị" aria-label="Chọn tất cả mặt hàng đang hiển thị"></th>
                                 <th class="py-3.5 px-4 w-12">STT</th>
                                 <th class="py-3.5 px-4">Ngày Order</th>
                                 <th class="py-3.5 px-4">Mã đơn / PO</th>
@@ -2070,6 +2071,27 @@
             updateOrderSelectionUI();
         }
 
+        function toggleSelectAllVisibleOrderItems(checked) {
+            const checkboxes = [...document.querySelectorAll('#orders-table-body .order-item-select')];
+            checkboxes.forEach(cb => {
+                const id = String(cb.dataset.orderId || '');
+                if (!id) return;
+                cb.checked = Boolean(checked);
+                if (checked) selectedOrderItemIds.add(id);
+                else selectedOrderItemIds.delete(id);
+            });
+            updateOrderSelectionUI();
+        }
+
+        function selectAllVisibleOrderItems() {
+            const checkboxes = [...document.querySelectorAll('#orders-table-body .order-item-select')];
+            if (!checkboxes.length) {
+                alert('Không có mặt hàng nào đang hiển thị để chọn. Hãy kiểm tra bộ lọc hoặc từ khóa tìm kiếm.');
+                return;
+            }
+            toggleSelectAllVisibleOrderItems(true);
+        }
+
         function clearOrderSelection() {
             selectedOrderItemIds.clear();
             document.querySelectorAll('.order-item-select').forEach(cb => { cb.checked = false; });
@@ -2084,6 +2106,16 @@
             if (countEl) countEl.textContent = count ? `${count} mặt hàng đã chọn` : 'Chọn nhiều mặt hàng để gộp / tách đơn';
             if (mergeBtn) mergeBtn.disabled = count < 2;
             if (splitBtn) splitBtn.disabled = count < 1;
+
+            // Header checkbox reflects selection state of the currently displayed rows only.
+            const headerCheckbox = document.getElementById('select-all-order-items');
+            const visibleCheckboxes = [...document.querySelectorAll('#orders-table-body .order-item-select')];
+            const visibleSelected = visibleCheckboxes.filter(cb => cb.checked).length;
+            if (headerCheckbox) {
+                headerCheckbox.checked = visibleCheckboxes.length > 0 && visibleSelected === visibleCheckboxes.length;
+                headerCheckbox.indeterminate = visibleSelected > 0 && visibleSelected < visibleCheckboxes.length;
+                headerCheckbox.disabled = visibleCheckboxes.length === 0;
+            }
         }
 
         function mergeSelectedOrderItems() {
