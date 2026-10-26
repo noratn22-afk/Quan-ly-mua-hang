@@ -1172,7 +1172,7 @@
             <div class="flex justify-end gap-3 pt-2 border-t border-slate-100">
                 <button type="button" onclick="closeExcelImportPreview()" class="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 transition">Hủy</button>
                 <button type="button" id="excel-import-confirm-btn" onclick="confirmExcelImport()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    Import
+                    Thay thế dữ liệu
                 </button>
             </div>
         </div>
@@ -1693,161 +1693,14 @@
 
     <script>
         // System Data State
-        let suppliers = [
-            "Công ty TNHH Thực Phẩm Sạch VN",
-            "Cổ Phần Thiết Bị Bếp Việt",
-            "Tập Đoàn Bao Bì & In Ấn Miền Nam",
-            "Công ty Điện Lạnh & Gia Dụng ABC",
-            "HOS",
-            "Thiên Ân",
-            "Srithai",
-            "NCC Khác"
-        ];
+        let suppliers = [];
 
         // Supplier -> multiple contract numbers. Backward compatible with current orders/localStorage.
         let supplierContracts = {};
 
-        let orders = [
-            {
-                id: 1,
-                restaurant: "BD - I.E KFC ATP",
-                item: "Ống gió bạc cách nhiệt phi 300",
-                unit: "Cái",
-                qty: 10,
-                area: "Bình Dương",
-                note: "Giao gấp đầu tuần",
-                by: "Ngọc",
-                date: "2026-09-11",
-                checkType: "ĐNMH",
-                supplier: "HOS",
-                contractNo: "DNMH001",
-                stage: "Đặt hàng",
-                invoiceNo: "",
-                invoiceDate: ""
-            },
-            {
-                id: 2,
-                restaurant: "BD - I.E KFC ATP",
-                item: "Máy bơm tăng áp JLM 1100",
-                unit: "Bộ",
-                qty: 2,
-                area: "Bình Dương",
-                note: "Thay thế máy hỏng",
-                by: "Ngọc",
-                date: "2026-09-11",
-                checkType: "ĐNMH",
-                supplier: "Thiên Ân",
-                contractNo: "DNMH002",
-                stage: "Đặt hàng",
-                invoiceNo: "",
-                invoiceDate: ""
-            },
-            {
-                id: 3,
-                restaurant: "BD - I.E KFC ATP",
-                item: "Relay 110",
-                unit: "Cái",
-                qty: 15,
-                area: "Bình Dương",
-                note: "Dự phòng bảo trì",
-                by: "Ngọc",
-                date: "2026-09-11",
-                checkType: "ĐNMH",
-                supplier: "",
-                contractNo: "DNMH003",
-                stage: "SSG",
-                invoiceNo: "",
-                invoiceDate: ""
-            },
-            {
-                id: 4,
-                restaurant: "BD - I.E KFC ATP",
-                item: "Đèn LED Âm Trần 12W",
-                unit: "Cái",
-                qty: 20,
-                area: "Bình Dương",
-                note: "Thay thế sảnh ăn",
-                by: "Ngọc",
-                date: "2026-09-05",
-                checkType: "ĐNMH",
-                supplier: "Cổ Phần Thiết Bị Bếp Việt",
-                contractNo: "DNMH004",
-                stage: "Đã giao hàng",
-                invoiceNo: "INV-8891",
-                invoiceDate: "2026-09-08"
-            }
-        ];
+        let orders = [];
 
-        let quotes = [
-            {
-                quoteId: 101,
-                orderId: 1,
-                from: "BD - I.E KFC ATP",
-                itemId: 1,
-                itemName: "Ống gió bạc cách nhiệt phi 300",
-                itemCode: "DNMH001",
-                supplierName: "Thiên Ân",
-                quotedPrice: 155000,
-                fileName: "DNMH001_ThienAn.pdf",
-                fileType: "application/pdf",
-                fileSize: 102400,
-                fileData: "",
-                uploadDate: "2026-09-11",
-                uploadedBy: "Ngọc",
-                status: "Uploaded"
-            },
-            {
-                quoteId: 102,
-                orderId: 1,
-                from: "BD - I.E KFC ATP",
-                itemId: 1,
-                itemName: "Ống gió bạc cách nhiệt phi 300",
-                itemCode: "DNMH001",
-                supplierName: "NCC ABC",
-                quotedPrice: 150000,
-                fileName: "DNMH001_NCCABC.pdf",
-                fileType: "application/pdf",
-                fileSize: 98000,
-                fileData: "",
-                uploadDate: "2026-09-11",
-                uploadedBy: "Ngọc",
-                status: "Uploaded"
-            },
-            {
-                quoteId: 103,
-                orderId: 3,
-                from: "BD - I.E KFC ATP",
-                itemId: 3,
-                itemName: "Relay 110",
-                itemCode: "DNMH003",
-                supplierName: "Cổ Phần Thiết Bị Bếp Việt",
-                quotedPrice: 111000,
-                fileName: "BG_Order_setup_Vn_Bếp_Việt.pdf",
-                fileType: "application/pdf",
-                fileSize: 85000,
-                fileData: "",
-                uploadDate: "2026-09-11",
-                uploadedBy: "Ngọc",
-                status: "Uploaded"
-            },
-            {
-                quoteId: 104,
-                orderId: 3,
-                from: "BD - I.E KFC ATP",
-                itemId: 3,
-                itemName: "Relay 110",
-                itemCode: "DNMH003",
-                supplierName: "Công ty Điện Lạnh & Gia Dụng ABC",
-                quotedPrice: 100000,
-                fileName: "BG_Order_setup_Dien_Lanh_ABC.pdf",
-                fileType: "application/pdf",
-                fileSize: 90000,
-                fileData: "",
-                uploadDate: "2026-09-11",
-                uploadedBy: "Ngọc",
-                status: "Uploaded"
-            }
-        ];
+        let quotes = [];
 
         // State variables for Quote Upload. File content stays in runtime/IndexedDB; never Base64 in localStorage.
         let currentQuoteFileBlob = null;
@@ -11097,32 +10950,89 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         // --- EXCEL IMPORT / TEMPLATE ---
         function downloadExcelTemplate() {
-            const wsData = [
-                ["Mã đơn / PO", "Ngày order", "From", "Tên mặt hàng", "ĐVT", "Số lượng", "Khu vực", "Ghi chú", "Người order"],
-                ["PO-20260911-001", "2026-09-11", "BD - I.E KFC ATP", "Ống gió bạc cách nhiệt phi 300", "Cái", 10, "Bình Dương", "Nhanh", "Ngọc"],
-                ["PO-20260911-001", "2026-09-11", "BD - I.E KFC ATP", "Máy bơm tăng áp JLM 1100", "Bộ", 2, "Bình Dương", "", "Ngọc"]
+            if (typeof XLSX === 'undefined') {
+                alert('Thư viện Excel chưa được tải. Vui lòng kiểm tra kết nối Internet và tải lại trang.');
+                return;
+            }
+
+            const headers = [
+                'Ngày Order', 'From (Bộ phận)', 'Tên mặt hàng', 'SL & ĐVT', 'Khu vực',
+                'Hình thức', 'Nhà Cung Cấp', 'Đơn giá mua', 'Giá trị mua', 'Giai đoạn', 'Hóa đơn'
             ];
+            const wsData = [headers, ...Array.from({ length: 200 }, () => Array(11).fill(''))];
             const wb = XLSX.utils.book_new();
             const ws = XLSX.utils.aoa_to_sheet(wsData);
-            XLSX.utils.book_append_sheet(wb, ws, "TemplateOrder");
-            XLSX.writeFile(wb, "ProcureFlow_Template_Order.xlsx");
+            ws['!cols'] = [
+                { wch: 15 }, { wch: 22 }, { wch: 34 }, { wch: 16 }, { wch: 18 },
+                { wch: 17 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 24 }
+            ];
+            ws['!autofilter'] = { ref: 'A1:K201' };
+            ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+            // Giá trị mua = số lượng đầu chuỗi trong cột D × đơn giá ở cột H.
+            for (let r = 2; r <= 201; r++) {
+                ws[`I${r}`] = {
+                    t: 'n',
+                    f: `IF(OR(D${r}="",H${r}=""),"",IFERROR(VALUE(SUBSTITUTE(LEFT(D${r},FIND(" ",D${r}&" ")-1),",","."))*H${r},""))`,
+                    z: '#,##0'
+                };
+                ws[`A${r}`] = ws[`A${r}`] || { t: 's', v: '' };
+                ws[`H${r}`] = ws[`H${r}`] || { t: 'n', v: '' };
+            }
+            ws['!ref'] = 'A1:K201';
+            ws['!dataValidation'] = [
+                { type: 'list', allowBlank: true, sqref: 'F2:F201', formulas: ['"ĐNMH,Hợp đồng"'] },
+                { type: 'list', allowBlank: true, sqref: 'J2:J201', formulas: ['"SSG,Đặt hàng,Đã giao hàng,Phát hành hóa đơn,Làm ĐNTT"'] }
+            ];
+            XLSX.utils.book_append_sheet(wb, ws, '16.10');
+
+            const guide = [
+                ['Trường', 'Cách nhập'],
+                ['Ngày Order', 'Nhập ngày dạng dd/mm/yyyy hoặc yyyy-mm-dd.'],
+                ['From (Bộ phận)', 'Bộ phận/đơn vị gửi yêu cầu.'],
+                ['Tên mặt hàng', 'Tên mặt hàng cần mua; không để trống.'],
+                ['SL & ĐVT', 'Nhập số lượng và đơn vị trong cùng ô, ví dụ: 10 Cái, 2 Bộ, 4 Bình.'],
+                ['Khu vực', 'Khu vực/địa điểm sử dụng.'],
+                ['Hình thức', 'Chọn ĐNMH hoặc Hợp đồng.'],
+                ['Nhà Cung Cấp', 'Nhập tên NCC đã chọn nếu có.'],
+                ['Đơn giá mua', 'Nhập đơn giá dạng số, không cần ghi VNĐ.'],
+                ['Giá trị mua', 'Tự tính theo số lượng trong cột SL & ĐVT × Đơn giá mua; không sửa cột công thức.'],
+                ['Giai đoạn', 'Ví dụ: SSG, Đặt hàng, Đã giao hàng, Phát hành hóa đơn, Làm ĐNTT.'],
+                ['Hóa đơn', 'Nhập số hóa đơn nếu đã có; chưa có thì để trống.'],
+                ['Lưu ý', 'Khi import, hệ thống chỉ nhận sheet có tên 16.10 và sẽ thay thế dữ liệu order hiện tại.']
+            ];
+            const guideSheet = XLSX.utils.aoa_to_sheet(guide);
+            guideSheet['!cols'] = [{ wch: 24 }, { wch: 105 }];
+            XLSX.utils.book_append_sheet(wb, guideSheet, 'HuongDan');
+            wb.Workbook = wb.Workbook || {};
+            wb.Workbook.CalcPr = { fullCalcOnLoad: true, forceFullCalc: true };
+            XLSX.writeFile(wb, 'ProcureFlow_Template_Order.xlsx');
         }
 
         // State: pending Excel import preview
         let pendingExcelImport = null;
-
         const EXCEL_IMPORT_COLUMN_ALIASES = {
-            date: ["ngày order", "date", "order date", "orderdate"],
-            restaurant: ["from", "from bộ phận", "from (bộ phận)", "department", "bộ phận", "người yêu cầu"],
+            date: ["ngày order", "date", "order date", "orderdate", "order nhận", "ngày nhận order"],
+            orderTime: ["thời gian order", "thời gian đặt hàng", "order time", "ordered at"],
+            restaurant: ["from", "from bộ phận", "from (bộ phận)", "department", "bộ phận", "người yêu cầu", "yêu cầu"],
             item: ["tên mặt hàng", "item", "item name", "itemname", "description", "tên hàng", "mặt hàng"],
             unit: ["đvt", "unit", "uom", "đơn vị", "đơn vị tính"],
             qty: ["số lượng", "qty", "quantity", "số lượng yêu cầu"],
+            qtyUnit: ["sl & đvt", "sl đvt", "sl va đvt", "số lượng và đvt", "số lượng đvt", "quantity and unit", "qty unit"],
+            price: ["giá", "đơn giá", "đơn giá mua", "price", "purchase price"],
+            purchaseValue: ["giá trị mua", "thành tiền", "purchase value", "purchase amount"],
+            stage: ["giai đoạn", "trạng thái", "status", "stage"],
+            invoiceNo: ["hóa đơn", "hoa don", "số hóa đơn", "số hđ hóa đơn", "invoice", "invoice no", "invoice number"],
             area: ["khu vực", "area", "location", "region"],
             note: ["ghi chú", "note", "notes", "remark", "remarks"],
-            by: ["người order", "by", "ordered by", "requester", "người yêu cầu"],
+            by: ["người order", "by", "ordered by", "requester"],
             checkType: ["hình thức", "hình thức mua hàng", "loại mua hàng", "purchase type", "check type"],
-            supplier: ["ncc", "nhà cung cấp", "supplier", "supplier name"],
-            contractNo: ["số hđ", "số hợp đồng", "contract no", "contract number", "số đnmh", "số đnmh"],
+            supplier: ["ncc", "ncc chọn", "nhà cung cấp", "supplier", "supplier name", "selected supplier"],
+            supplierAsked: ["ncc hỏi giá", "supplier asked", "supplier quote request"],
+            supplierAsked2: ["ncc hỏi giá 1", "ncc hỏi giá (1)", "supplier asked 1"],
+            contractTracking: ["theo dõi hđ", "theo dõi hợp đồng", "contract tracking"],
+            sourceSTT: ["stt", "no", "number"],
+            contractNo: ["số hđ", "số hợp đồng", "contract no", "contract number", "số đnmh"],
             contractItemNo: ["stt hđ", "stt mặt hàng trong hợp đồng", "contract item no", "contract item number", "stt / mã hàng hđ"],
             orderGroupId: ["mã đơn", "mã đơn / po", "po", "order group", "order group id", "ordergroupid"]
         };
@@ -11301,6 +11211,31 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 : { valid: false, value: null, reason: `Số lượng không hợp lệ: "${raw}"` };
         }
 
+        function parseQuantityAndUnit(value) {
+            const raw = String(value ?? '').trim();
+            if (!raw) return { qtyRaw: '', unit: '' };
+            const match = raw.match(/^([0-9][0-9.,]*)\s*(.*?)\s*$/);
+            if (!match) return { qtyRaw: raw, unit: '' };
+            return { qtyRaw: match[1], unit: String(match[2] || '').trim() };
+        }
+
+        function parseOptionalImportPrice(value) {
+            if (value === null || value === undefined || String(value).trim() === '') return { valid: true, value: null };
+            if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? { valid: true, value } : { valid: false, value: null };
+            let raw = String(value).trim().replace(/[₫đ\s]/gi, '');
+            if (!raw) return { valid: true, value: null };
+            if (raw.includes(',') && raw.includes('.')) {
+                if (raw.lastIndexOf(',') > raw.lastIndexOf('.')) raw = raw.replace(/\./g, '').replace(',', '.');
+                else raw = raw.replace(/,/g, '');
+            } else if (/^\d{1,3}(\.\d{3})+$/.test(raw) || /^\d{1,3}(,\d{3})+$/.test(raw)) {
+                raw = raw.replace(/[.,]/g, '');
+            } else if (/^\d+,\d+$/.test(raw)) {
+                raw = raw.replace(',', '.');
+            }
+            const parsed = Number(raw);
+            return Number.isFinite(parsed) && parsed >= 0 ? { valid: true, value: parsed } : { valid: false, value: null };
+        }
+
         function validateImportRow(rawRow, rowNumber, fieldMap) {
             const getField = field => {
                 const index = fieldMap[field];
@@ -11308,23 +11243,34 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             };
 
             const itemRaw = getField('item');
-            if (!String(itemRaw).trim()) {
-                return { valid: false, rowNumber, error: 'Tên mặt hàng trống' };
-            }
+            if (!String(itemRaw).trim()) return { valid: false, rowNumber, error: 'Tên mặt hàng trống' };
 
-            const quantity = parseQuantity(getField('qty'));
-            if (!quantity.valid) {
-                return { valid: false, rowNumber, error: quantity.reason };
-            }
+            const combinedQtyUnit = parseQuantityAndUnit(getField('qtyUnit'));
+            const quantity = parseQuantity(String(getField('qty') || '').trim() || combinedQtyUnit.qtyRaw);
+            if (!quantity.valid) return { valid: false, rowNumber, error: quantity.reason };
 
             const rawDate = getField('date');
-            const dateResult = rawDate
-                ? parseExcelDate(rawDate)
-                : { valid: true, value: getTodayISO() };
+            const dateResult = rawDate ? parseExcelDate(rawDate) : { valid: true, value: getTodayISO() };
+            if (!dateResult.valid) return { valid: false, rowNumber, error: dateResult.reason };
 
-            if (!dateResult.valid) {
-                return { valid: false, rowNumber, error: dateResult.reason };
+            const priceResult = parseOptionalImportPrice(getField('price'));
+            if (!priceResult.valid) return { valid: false, rowNumber, error: `Đơn giá mua không hợp lệ: "${getField('price')}"` };
+            const valueResult = parseOptionalImportPrice(getField('purchaseValue'));
+            if (!valueResult.valid) return { valid: false, rowNumber, error: `Giá trị mua không hợp lệ: "${getField('purchaseValue')}"` };
+
+            const rawOrderTime = getField('orderTime');
+            let orderTime = '';
+            if (rawOrderTime !== '' && rawOrderTime !== null && rawOrderTime !== undefined) {
+                const parsedOrderTime = parseExcelDate(rawOrderTime);
+                orderTime = parsedOrderTime.valid ? parsedOrderTime.value : String(rawOrderTime).trim();
             }
+
+            const checkType = String(getField('checkType') || 'ĐNMH').trim() || 'ĐNMH';
+            const stage = String(getField('stage') || 'SSG').trim() || 'SSG';
+            const purchasePrice = priceResult.value;
+            const purchaseValue = valueResult.value !== null && valueResult.value !== undefined
+                ? valueResult.value
+                : (purchasePrice !== null && purchasePrice !== undefined ? quantity.value * purchasePrice : null);
 
             return {
                 valid: true,
@@ -11332,18 +11278,27 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 data: {
                     id: null,
                     date: dateResult.value,
+                    orderTime,
                     restaurant: String(getField('restaurant') || 'Chưa xác định').trim() || 'Chưa xác định',
                     item: String(itemRaw).trim(),
-                    unit: String(getField('unit') || 'Cái').trim() || 'Cái',
+                    unit: String(getField('unit') || combinedQtyUnit.unit || 'Cái').trim() || 'Cái',
                     qty: quantity.value,
                     area: String(getField('area') || 'Chưa xác định').trim() || 'Chưa xác định',
                     note: String(getField('note') || '').trim(),
-                    by: String(getField('by') || 'Ngọc').trim() || 'Ngọc',
-                    checkType: String(getField('checkType') || 'ĐNMH').trim() || 'ĐNMH',
+                    by: String(getField('by') || '').trim(),
+                    checkType,
                     supplier: String(getField('supplier') || '').trim(),
                     contractNo: String(getField('contractNo') || '').trim(),
                     contractItemNo: String(getField('contractItemNo') || '').trim(),
-                    orderGroupId: String(getField('orderGroupId') || '').trim()
+                    orderGroupId: String(getField('orderGroupId') || '').trim(),
+                    purchasePrice,
+                    purchaseValue,
+                    stage,
+                    invoiceNo: String(getField('invoiceNo') || '').trim(),
+                    supplierAsked: String(getField('supplierAsked') || '').trim(),
+                    supplierAsked2: String(getField('supplierAsked2') || '').trim(),
+                    contractTracking: String(getField('contractTracking') || '').trim(),
+                    sourceSTT: String(getField('sourceSTT') || '').trim()
                 }
             };
         }
@@ -11428,7 +11383,6 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         function showImportPreview(preview) {
             pendingExcelImport = preview;
-
             document.getElementById('excel-import-preview-file').innerText =
                 `File: ${preview.fileName} • Sheet: ${preview.sheetName}`;
 
@@ -11437,9 +11391,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 ['Hợp lệ', preview.validRows.length, 'text-emerald-700 bg-emerald-50 border-emerald-200'],
                 ['Dòng trống', preview.blankRows, 'text-slate-600 bg-slate-50 border-slate-200'],
                 ['Dòng lỗi', preview.errors.length, 'text-rose-700 bg-rose-50 border-rose-200'],
-                ['Trùng', preview.duplicates.length, 'text-amber-700 bg-amber-50 border-amber-200']
+                ['Trùng trong Excel', preview.duplicates.length, 'text-amber-700 bg-amber-50 border-amber-200']
             ];
-
             document.getElementById('excel-import-preview-summary').innerHTML = summary.map(([label, value, cls]) => `
                 <div class="rounded-xl border p-3 ${cls}">
                     <div class="text-[11px] font-medium opacity-80">${escapeHTML(label)}</div>
@@ -11447,21 +11400,17 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 </div>
             `).join('');
 
-            const expectedAdd = preview.validRows.filter(row => !row._duplicate).length;
+            const expectedAdd = preview.validRows.length;
             document.getElementById('excel-import-preview-message').innerHTML = expectedAdd > 0
-                ? `<div class="rounded-xl border border-indigo-200 bg-indigo-50 p-3.5 text-sm text-indigo-800"><div class="font-semibold">Dự kiến thêm mới: ${expectedAdd} order</div><div class="text-xs mt-1">Các dòng lỗi và dòng trùng sẽ không được ghi vào orders.</div></div>`
-                : `<div class="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-800"><div class="font-semibold">Không có dòng mới để import.</div><div class="text-xs mt-1">Hãy kiểm tra dòng lỗi hoặc dữ liệu trùng với orders hiện tại.</div></div>`;
+                ? `<div class="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-900"><div class="font-semibold">Sẽ thay thế dữ liệu hiện tại bằng ${expectedAdd} dòng hợp lệ từ Excel.</div><div class="text-xs mt-1">Các dòng trùng nhau trong chính Excel vẫn được giữ. Dòng lỗi sẽ bị bỏ qua. Thao tác này xóa dữ liệu order, báo giá, theo dõi và PO cũ khỏi bộ dữ liệu đang dùng.</div></div>`
+                : `<div class="rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-sm text-rose-800"><div class="font-semibold">Không có dòng hợp lệ để thay thế dữ liệu.</div><div class="text-xs mt-1">Dữ liệu hiện tại sẽ không bị thay đổi.</div></div>`;
 
             const errorBox = document.getElementById('excel-import-preview-errors');
             const errorList = document.getElementById('excel-import-preview-error-list');
-
             if (preview.errors.length) {
                 errorBox.classList.remove('hidden');
                 errorList.innerHTML = preview.errors.map(err => `
-                    <div class="flex gap-2">
-                        <span class="font-semibold">Dòng ${escapeHTML(err.rowNumber)}:</span>
-                        <span>${escapeHTML(err.error)}</span>
-                    </div>
+                    <div class="flex gap-2"><span class="font-semibold">Dòng ${escapeHTML(err.rowNumber)}:</span><span>${escapeHTML(err.error)}</span></div>
                 `).join('');
             } else {
                 errorBox.classList.add('hidden');
@@ -11469,43 +11418,33 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             }
 
             const displayNames = {
-                date: 'Ngày order',
-                restaurant: 'From',
-                item: 'Tên mặt hàng',
-                unit: 'ĐVT',
-                qty: 'Số lượng',
-                area: 'Khu vực',
-                note: 'Ghi chú',
-                by: 'Người order',
-                checkType: 'Hình thức',
-                supplier: 'NCC',
-                contractNo: 'Số HĐ / ĐNMH',
-                contractItemNo: 'STT HĐ',
-                orderGroupId: 'Mã đơn / PO'
+                date: 'Ngày Order', restaurant: 'From (Bộ phận)', item: 'Tên mặt hàng', qtyUnit: 'SL & ĐVT',
+                qty: 'Số lượng', unit: 'ĐVT', area: 'Khu vực', checkType: 'Hình thức', supplier: 'Nhà Cung Cấp',
+                price: 'Đơn giá mua', purchaseValue: 'Giá trị mua', stage: 'Giai đoạn', invoiceNo: 'Hóa đơn',
+                orderTime: 'Thời gian order', note: 'Ghi chú', by: 'Người order', supplierAsked: 'NCC hỏi giá',
+                supplierAsked2: 'NCC hỏi giá (1)', contractTracking: 'Theo dõi HĐ', contractNo: 'Số HĐ',
+                contractItemNo: 'STT HĐ', orderGroupId: 'Mã đơn / PO'
             };
-
             document.getElementById('excel-import-preview-mapped').innerText =
                 `Đã nhận diện header tại dòng ${preview.headerRow + 1}. Cột: ${preview.recognizedFields.map(f => displayNames[f] || f).join(', ')}`;
 
-            document.getElementById('excel-import-preview-table-body').innerHTML =
-                preview.validRows.slice(0, 10).map(row => `
-                    <tr class="hover:bg-slate-50">
-                        <td class="py-2 px-3 text-slate-500">${row.rowNumber}</td>
-                        <td class="py-2 px-3">${escapeHTML(row.data.date)}</td>
-                        <td class="py-2 px-3">${escapeHTML(row.data.restaurant)}</td>
-                        <td class="py-2 px-3 font-medium text-slate-800">${escapeHTML(row.data.item)}</td>
-                        <td class="py-2 px-3">${escapeHTML(row.data.unit)}</td>
-                        <td class="py-2 px-3 font-semibold text-indigo-600">${escapeHTML(row.data.qty)}</td>
-                        <td class="py-2 px-3">${escapeHTML(row.data.area)}</td>
-                    </tr>
-                `).join('');
+            document.getElementById('excel-import-preview-table-body').innerHTML = preview.validRows.slice(0, 10).map(row => `
+                <tr class="hover:bg-slate-50">
+                    <td class="py-2 px-3 text-slate-500">${row.rowNumber}</td>
+                    <td class="py-2 px-3">${escapeHTML(row.data.date)}</td>
+                    <td class="py-2 px-3">${escapeHTML(row.data.restaurant)}</td>
+                    <td class="py-2 px-3 font-medium text-slate-800">${escapeHTML(row.data.item)}</td>
+                    <td class="py-2 px-3">${escapeHTML(row.data.unit)}</td>
+                    <td class="py-2 px-3 font-semibold text-indigo-600">${escapeHTML(row.data.qty)}</td>
+                    <td class="py-2 px-3">${escapeHTML(row.data.area)}</td>
+                </tr>
+            `).join('');
 
             const confirmBtn = document.getElementById('excel-import-confirm-btn');
-            confirmBtn.innerText = expectedAdd > 0 ? `Import ${expectedAdd} dòng` : 'Import';
+            confirmBtn.innerText = expectedAdd > 0 ? `Thay thế bằng ${expectedAdd} dòng` : 'Thay thế dữ liệu';
             confirmBtn.disabled = expectedAdd <= 0;
-
             document.getElementById('modal-excel-import-preview').classList.remove('hidden');
-            lucide.createIcons();
+            if (window.lucide?.createIcons) lucide.createIcons();
         }
 
         function closeExcelImportPreview() {
@@ -11515,25 +11454,31 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         function confirmExcelImport() {
             if (!pendingExcelImport) return;
-
-            const rowsToImport = pendingExcelImport.validRows.filter(row => !row._duplicate);
+            const rowsToImport = pendingExcelImport.validRows.slice();
             if (!rowsToImport.length) {
+                alert('Không có dòng hợp lệ để thay thế dữ liệu. Dữ liệu hiện tại chưa bị thay đổi.');
                 closeExcelImportPreview();
                 return;
             }
 
             try {
-                const usedIds = orders.map(order => order.id);
-                const baseOrderCount = orders.length;
+                const usedIds = [];
                 const importGroups = new Map();
+                const sourceSheet = pendingExcelImport.sheetName;
+                const sourceFile = pendingExcelImport.fileName;
 
-                const importedOrders = rowsToImport.map((row, index) => {
+                const importedOrders = rowsToImport.map((row) => {
                     const id = createSafeOrderId(usedIds);
                     usedIds.push(id);
                     const explicitGroup = String(row.data.orderGroupId || '').trim();
                     const groupKey = explicitGroup || `__ROW_${row.rowNumber}`;
                     if (!importGroups.has(groupKey)) importGroups.set(groupKey, explicitGroup || createOrderGroupId(row.data.date));
                     const orderGroupId = importGroups.get(groupKey);
+                    const importedStage = String(row.data.stage || 'SSG').trim() || 'SSG';
+                    const placedDate = String(row.data.orderTime || '').trim();
+                    const stageKey = normalizeSearchText(importedStage);
+                    const isDelivered = stageKey.includes('da giao');
+                    const isPlaced = Boolean(placedDate) || ['dat hang', 'da giao hang', 'phat hanh hoa don', 'lam dntt'].includes(stageKey);
 
                     return {
                         id,
@@ -11548,46 +11493,76 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         date: row.data.date,
                         checkType: row.data.checkType || 'ĐNMH',
                         supplier: row.data.supplier || '',
-                        contractNo: row.data.contractNo || ((row.data.checkType || 'ĐNMH') === 'Hợp đồng' ? '' : `DNMH${String(baseOrderCount + index + 1).padStart(3, '0')}`),
+                        contractNo: row.data.contractNo || '',
                         contractItemNo: normalizeContractItemNoValue(row.data.contractItemNo, row.data.checkType || 'ĐNMH'),
-                        stage: 'SSG',
-                        invoiceNo: '',
+                        stage: importedStage,
+                        purchasePrice: row.data.purchasePrice,
+                        purchaseValue: row.data.purchaseValue,
+                        purchasePriceSource: row.data.purchasePrice !== null && row.data.purchasePrice !== undefined ? 'Manual' : '',
+                        invoiceNo: row.data.invoiceNo || '',
                         invoiceDate: '',
                         stageTimes: {},
-                        orderPlaced: false,
-                        orderedAt: '',
-                        orderPlacedAt: '',
-                        deliveredAt: '',
+                        orderPlaced: isPlaced,
+                        orderedAt: placedDate,
+                        orderPlacedAt: placedDate,
+                        deliveredAt: isDelivered ? placedDate : '',
                         stageChangedAt: '',
-                        deliveryStatus: 'Chưa giao',
+                        deliveryStatus: isDelivered ? 'Đã giao' : 'Chưa giao',
                         deliveryUpdatedAt: '',
                         deliveryIssue: '',
                         deliveryAction: '',
-                        deliveryHistory: []
+                        deliveryHistory: [],
+                        orderTime: row.data.orderTime,
+                        supplierAsked: row.data.supplierAsked,
+                        supplierAsked2: row.data.supplierAsked2,
+                        contractTracking: row.data.contractTracking,
+                        sourceSTT: row.data.sourceSTT,
+                        sourceExcelSheet: sourceSheet,
+                        sourceExcelFile: sourceFile
                     };
                 });
 
-                // IMPORTANT: append; never replace existing orders.
-                orders.push(...importedOrders.map((order, index) => normalizeOrderRecord(order, orders.length + index)));
+                const normalizedOrders = [];
+                const ids = new Set();
+                importedOrders.forEach((order, index) => normalizedOrders.push(normalizeOrderRecord(order, index, ids)));
 
-                saveToStorage();
-                renderAll();
+                // Excel is the source of truth: replace all order-linked state instead of appending.
+                orders = normalizedOrders;
+                quotes = [];
+                trackingHistory = [];
+                quoteRequests = [];
+                purchaseOrders = [];
+                supplierContracts = {};
+                const supplierSet = new Map();
+                rowsToImport.forEach(row => {
+                    [row.data.supplier, row.data.supplierAsked, row.data.supplierAsked2].forEach(name => {
+                        const trimmed = String(name || '').trim();
+                        if (trimmed) supplierSet.set(trimmed.toLocaleLowerCase('vi-VN'), trimmed);
+                    });
+                });
+                suppliers = Array.from(supplierSet.values());
 
                 const duplicateCount = pendingExcelImport.duplicates.length;
                 const errorCount = pendingExcelImport.errors.length;
-                const addedCount = importedOrders.length;
-
-                closeExcelImportPreview();
-
-                alert(
-                    `Import thành công!\n\n` +
-                    `Đã thêm: ${addedCount} order\n` +
-                    `Bỏ qua trùng: ${duplicateCount}\n` +
-                    `Dòng lỗi: ${errorCount}`
-                );
+                const loadedCount = importedOrders.length;
+                saveToStorage().then(ok => {
+                    if (ok === false) throw new Error('Không lưu được dữ liệu thay thế vào bộ nhớ trình duyệt.');
+                    renderAll();
+                    closeExcelImportPreview();
+                    alert(
+                        `Thay thế dữ liệu thành công!\n\nNguồn: ${sourceFile} / Sheet ${sourceSheet}\n` +
+                        `Đã nạp: ${loadedCount} order\n` +
+                        `Dòng trùng trong Excel vẫn được giữ: ${duplicateCount}\n` +
+                        `Dòng lỗi bỏ qua: ${errorCount}\n\n` +
+                        `Danh sách báo giá, lịch sử theo dõi, hợp đồng NCC và PO cũ đã được xóa khỏi dữ liệu đang dùng.`
+                    );
+                }).catch(err => {
+                    console.error('Excel replace save error:', err);
+                    alert(`Đã xử lý Excel nhưng không lưu được dữ liệu thay thế.\n${err?.message || 'Vui lòng thử lại.'}`);
+                });
             } catch (err) {
-                console.error("Excel import error:", err);
-                alert(`Không thể lưu dữ liệu import vào hệ thống.\n${err?.message || 'Vui lòng thử lại.'}`);
+                console.error('Excel replace error:', err);
+                alert(`Không thể thay thế dữ liệu bằng Excel.\n${err?.message || 'Vui lòng thử lại.'}`);
             }
         }
 
@@ -11632,9 +11607,15 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         throw new Error('File không chứa sheet dữ liệu.');
                     }
 
-                    const firstSheetName = workbook.SheetNames[0];
+                    const isCSVFile = /\.csv$/i.test(file.name || '') || String(file.type || '').toLowerCase().includes('csv');
+                    const firstSheetName = isCSVFile
+                        ? workbook.SheetNames[0]
+                        : workbook.SheetNames.find(name => String(name).trim() === '16.10');
+                    if (!firstSheetName) {
+                        throw new Error(`Không tìm thấy sheet "16.10". Các sheet hiện có: ${workbook.SheetNames.join(', ')}. Vui lòng chọn file Excel đúng mẫu.`);
+                    }
                     const worksheet = workbook.Sheets[firstSheetName];
-                    if (!worksheet) throw new Error('Không thể đọc sheet đầu tiên của file.');
+                    if (!worksheet) throw new Error(`Không thể đọc sheet ${firstSheetName}.`);
 
                     const rows = XLSX.utils.sheet_to_json(worksheet, {
                         header: 1,
@@ -11657,10 +11638,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         throw new Error('Không tìm thấy dòng tiêu đề.');
                     }
 
-                    if (headerInfo.fieldMap.item === undefined || headerInfo.fieldMap.qty === undefined) {
+                    if (headerInfo.fieldMap.item === undefined || (headerInfo.fieldMap.qty === undefined && headerInfo.fieldMap.qtyUnit === undefined)) {
                         const missing = [];
                         if (headerInfo.fieldMap.item === undefined) missing.push('Tên mặt hàng');
-                        if (headerInfo.fieldMap.qty === undefined) missing.push('Số lượng');
+                        if (headerInfo.fieldMap.qty === undefined && headerInfo.fieldMap.qtyUnit === undefined) missing.push('Số lượng hoặc SL & ĐVT');
                         throw new Error(`Thiếu cột ${missing.join(' hoặc ')}.`);
                     }
 
@@ -11691,18 +11672,15 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         else errors.push(result);
                     });
 
-                    const existingKeys = new Set(orders.map(buildOrderDuplicateKey));
                     const importKeys = new Set();
                     const duplicates = [];
-
+                    // Replacement mode compares duplicates only inside the selected Excel source,
+                    // never against old browser data that is about to be replaced.
                     validRows.forEach(row => {
                         const key = buildOrderDuplicateKey(row.data);
-                        if (existingKeys.has(key) || importKeys.has(key)) {
+                        if (importKeys.has(key)) {
                             row._duplicate = true;
-                            duplicates.push({
-                                rowNumber: row.rowNumber,
-                                data: row.data
-                            });
+                            duplicates.push({ rowNumber: row.rowNumber, data: row.data });
                         } else {
                             row._duplicate = false;
                             importKeys.add(key);
@@ -11724,14 +11702,14 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     console.error("Excel import error:", err);
 
                     const msg = err?.message || '';
-                    if (/^Thiếu cột/i.test(msg)) {
+                    if (/^Thiếu cột/i.test(msg) || /Không tìm thấy sheet "16\.10"/i.test(msg)) {
                         alert(msg);
                     } else if (/Không tìm thấy dòng tiêu đề/i.test(msg)) {
                         alert("Không tìm thấy dòng tiêu đề.");
                     } else if (/không chứa dữ liệu/i.test(msg)) {
                         alert(msg);
                     } else if (/sheet/i.test(msg)) {
-                        alert("Không thể đọc sheet dữ liệu đầu tiên của file.");
+                        alert("Không thể đọc sheet dữ liệu Excel đã chọn.");
                     } else {
                         alert("Không thể đọc file Excel. File có thể bị hỏng hoặc không đúng định dạng.");
                     }
