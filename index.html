@@ -1164,6 +1164,8 @@
                                 <th class="py-2 px-3">ĐVT</th>
                                 <th class="py-2 px-3">SL</th>
                                 <th class="py-2 px-3">Khu vực</th>
+                                <th class="py-2 px-3">Giai đoạn</th>
+                                <th class="py-2 px-3">Hóa đơn</th>
                             </tr>
                         </thead>
                         <tbody id="excel-import-preview-table-body" class="divide-y divide-slate-100"></tbody>
@@ -2289,20 +2291,21 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         // Chuẩn hóa các nhãn giai đoạn để bộ lọc và trạng thái dùng cùng một quy tắc.
         function normalizePurchaseStageValue(stage) {
-            const raw = String(stage ?? '').trim();
-            const key = normalizeSearchText(raw);
+            const raw = String(stage ?? '').replace(/\u00A0/g, ' ').trim();
+            const key = normalizeSearchText(raw).replace(/\s+/g, ' ').trim();
             if (!key || key === 'ssg') return 'SSG';
-            if (key === 'dat hang' || key === 'da dat hang' || key === 'dat hang roi') return 'Đặt hàng';
-            if (key === 'da giao hang' || key === 'da nhan hang') return 'Đã giao hàng';
-            if (key === 'phat hanh hoa don' || key === 'phat hanh hoa don roi') return 'Phát hành Hóa đơn';
-            if (key === 'lam dntt' || key === 'lam de nghi thanh toan') return 'Làm ĐNTT';
+            if (['dat hang', 'da dat hang', 'dat hang roi'].includes(key)) return 'Đặt hàng';
+            if (['da giao hang', 'da nhan hang', 'giao hang'].includes(key)) return 'Đã giao hàng';
+            if (['phat hanh hoa don', 'phat hanh hoa don roi', 'da phat hanh hoa don'].includes(key)) return 'Phát hành Hóa đơn';
+            if (['lam dntt', 'lam de nghi thanh toan'].includes(key)) return 'Làm ĐNTT';
             return raw || 'SSG';
         }
 
-        // Các giai đoạn từ Đặt hàng trở đi đều được xem là Đã đặt.
+        // Mọi giai đoạn từ Đặt hàng trở đi đều là trạng thái ĐÃ ĐẶT.
+        // Chuẩn hóa cả chữ "đ" và khoảng trắng để Excel/HTML dùng cùng quy tắc.
         function isPlacedStageValue(stage) {
-            const stageKey = normalizeSearchText(stage || '');
-            return ['dat hang', 'da dat hang', 'dat hang roi', 'da giao hang', 'da nhan hang', 'phat hanh hoa don', 'phat hanh hoa don roi', 'lam dntt', 'lam de nghi thanh toan'].includes(stageKey);
+            const stageKey = normalizeSearchText(normalizePurchaseStageValue(stage || '')).replace(/\s+/g, ' ').trim();
+            return ['dat hang', 'da dat hang', 'dat hang roi', 'da giao hang', 'da nhan hang', 'giao hang', 'phat hanh hoa don', 'phat hanh hoa don roi', 'da phat hanh hoa don', 'lam dntt', 'lam de nghi thanh toan'].includes(stageKey);
         }
 
         function isOrderStageConsideredPlaced(order) {
@@ -8451,9 +8454,11 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         // --- TAB 3 SEARCH / FILTER HELPERS -----------------------------------
         function normalizeSearchText(text) {
             return String(text ?? '')
+                .replace(/\u00A0/g, ' ')
                 .normalize('NFD')
                 .replace(/[\u0300-\u036f]/g, '')
                 .toLowerCase()
+                .replace(/đ/g, 'd')
                 .replace(/[–—−]/g, '-')
                 .replace(/[\s_-]+/g, ' ')
                 .trim();
@@ -10991,7 +10996,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         </div>
                     </div>
                     <div class="overflow-x-auto">
-                        <table class="w-full min-w-[1120px] text-left border-collapse text-sm">
+                        <table class="w-full min-w-[1280px] text-left border-collapse text-sm">
                             <thead class="bg-white border-b border-slate-200">
                                 <tr class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">
                                     <th class="py-2.5 px-3 w-12 text-center">Chọn</th>
@@ -11004,6 +11009,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                     <th class="py-2.5 px-3">Hình thức</th>
                                     <th class="py-2.5 px-3 text-right">Giá mua</th>
                                     <th class="py-2.5 px-3">Giai đoạn</th>
+                                    <th class="py-2.5 px-3">Hóa đơn</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
@@ -11013,6 +11019,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                     const disabled = isOrderConsideredDelivered(o);
                                     const price = Number.isFinite(Number(o.purchasePrice)) ? formatPurchaseMoney(o.purchasePrice) : '-';
                                     const placedAt = o.orderedAt ? formatDateTimeVN(o.orderedAt) : '';
+                                    const invoiceInfo = getOrderInvoiceInfo(o);
+                                    const invoiceText = (invoiceInfo.invoiceNo || invoiceInfo.invoiceDate)
+                                        ? `${invoiceInfo.invoiceNo || '-'}${invoiceInfo.invoiceDate ? ` (${formatDateVN(invoiceInfo.invoiceDate)})` : ''}`
+                                        : (['phat hanh hoa don', 'lam dntt'].includes(normalizeSearchText(o.stage || '')) ? 'Chưa nhập số HĐ' : 'Chưa có');
                                     return `
                                         <tr class="${overdueInfo.overdue ? 'bg-rose-50/70 border-l-4 border-l-rose-500' : (purchased ? 'bg-indigo-50/20' : 'bg-rose-50/30')} hover:bg-slate-50/80 align-top">
                                             <td class="py-3 px-3 text-center">
@@ -11034,6 +11044,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                                 ${placedAt ? `<div class="text-[10px] text-indigo-600 mt-1">Đã đặt: ${escapeHTML(placedAt)}</div>` : ''}
                                                 <div class="text-[10px] text-slate-400 mt-1">PO: Chưa có</div>
                                             </td>
+                                            <td class="py-3 px-3 text-xs min-w-[170px] ${invoiceInfo.invoiceNo ? 'text-violet-700 font-semibold' : 'text-slate-500'}">${escapeHTML(invoiceText)}</td>
                                         </tr>
                                     `;
                                 }).join('')}
@@ -11582,7 +11593,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             ws['!ref'] = 'A1:K201';
             ws['!dataValidation'] = [
                 { type: 'list', allowBlank: true, sqref: 'F2:F201', formulas: ['"ĐNMH,Hợp đồng"'] },
-                { type: 'list', allowBlank: true, sqref: 'J2:J201', formulas: ['"SSG,Đặt hàng,Đã giao hàng,Phát hành hóa đơn,Làm ĐNTT"'] }
+                { type: 'list', allowBlank: true, sqref: 'J2:J201', formulas: ['"SSG,Đặt hàng,Đã đặt hàng,Đã giao hàng,Phát hành Hóa đơn,Làm ĐNTT"'] }
             ];
             XLSX.utils.book_append_sheet(wb, ws, '16.10');
 
@@ -11597,8 +11608,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 ['Nhà Cung Cấp', 'Nhập tên NCC đã chọn nếu có.'],
                 ['Đơn giá mua', 'Nhập đơn giá dạng số, không cần ghi VNĐ.'],
                 ['Giá trị mua', 'Tự tính theo số lượng trong cột SL & ĐVT × Đơn giá mua; không sửa cột công thức.'],
-                ['Giai đoạn', 'Ví dụ: SSG, Đặt hàng, Đã giao hàng, Phát hành hóa đơn, Làm ĐNTT.'],
-                ['Hóa đơn', 'Nhập số hóa đơn nếu đã có; chưa có thì để trống.'],
+                ['Giai đoạn', 'SSG = Chưa đặt. Đặt hàng, Đã đặt hàng, Đã giao hàng, Phát hành Hóa đơn và Làm ĐNTT đều được tính là Đã đặt.'],
+                ['Hóa đơn', 'Nhập số hóa đơn, có thể kèm ngày, ví dụ 1115 (18/09/2026). Các mặt hàng cùng số hóa đơn sẽ được gom vào cùng một PO.'],
                 ['Lưu ý', 'Khi import, hệ thống chỉ nhận sheet có tên 16.10 và sẽ thay thế dữ liệu order hiện tại.']
             ];
             const guideSheet = XLSX.utils.aoa_to_sheet(guide);
@@ -12048,6 +12059,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     <td class="py-2 px-3">${escapeHTML(row.data.unit)}</td>
                     <td class="py-2 px-3 font-semibold text-indigo-600">${escapeHTML(row.data.qty)}</td>
                     <td class="py-2 px-3">${escapeHTML(row.data.area)}</td>
+                    <td class="py-2 px-3"><span class="inline-flex px-2 py-0.5 rounded font-semibold ${isPlacedStageValue(row.data.stage) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${escapeHTML(row.data.stage || 'SSG')}</span></td>
+                    <td class="py-2 px-3">${escapeHTML(row.data.invoiceNo || 'Chưa có')}</td>
                 </tr>
             `).join('');
 
@@ -12092,7 +12105,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     const invoiceDate = normalizeInvoiceDateValue(row.data.invoiceDate) || parseInvoiceCellValue(row.data.invoiceNo).invoiceDate || '';
                     const hasInvoice = Boolean(invoiceNo);
                     const sourceOrderTime = String(row.data.orderTime || '').trim();
-                    const isPlaced = Boolean(sourceOrderTime) || hasInvoice || isPlacedStageValue(importedStage);
+                    const isPlaced = isPlacedStageValue(importedStage) || hasInvoice || Boolean(sourceOrderTime);
                     // If the sheet only has "Ngày Order", use that as the placed timestamp
                     // for records known to be placed; don't mark an SSG row as placed just
                     // because it has a request date.
