@@ -1968,15 +1968,10 @@
                 const status = String(po?.status || 'Draft').trim();
                 if (!includeInvalid && ['Invalid', 'Đã hủy'].includes(status)) return;
                 const explicitGroupId = normalizeOrderGroupId(po?.orderGroupId);
-                if (explicitGroupId) {
-                    if (explicitGroupId === groupId) result.push(po);
-                    return;
-                }
                 const poItemIds = getPurchaseOrderItemIds(po).filter(id => groupItemIds.has(String(id)));
-                if (!poItemIds.length) return;
-                const allExistingItems = getPurchaseOrderItems(po);
-                const derivedGroups = new Set(allExistingItems.map(o => getOrderGroupId(o)).filter(Boolean));
-                if (derivedGroups.size === 1 && derivedGroups.has(groupId)) result.push(po);
+                // An explicit group owns the PO, but invoice-based POs may span multiple order groups.
+                // Show the same PO under every group that contains at least one of its items.
+                if (explicitGroupId === groupId || poItemIds.length) result.push(po);
             });
             return result.sort((a, b) => {
                 const da = new Date(a?.createdAt || a?.poDate || '1970-01-01');
@@ -2219,8 +2214,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             const normalizedStatus = ['test', 'cancelled', 'canceled', 'invalid'].includes(statusKey)
                 ? 'Invalid'
                 : (PURCHASE_ORDER_STATUSES.includes(rawStatus) ? rawStatus : 'Draft');
-            const rawStage = String(source.stage || '').trim();
+            const rawStage = normalizePurchaseStageValue(source.stage || 'SSG');
             const normalizedStage = PURCHASE_ORDER_STAGES.includes(rawStage) ? rawStage : 'SSG';
+            const parsedInvoice = parseInvoiceCellValue(source.invoiceNo);
+            const explicitInvoiceDate = source.invoiceDate ? normalizeInvoiceDateValue(source.invoiceDate) : '';
             return {
                 ...source,
                 poId,
@@ -2232,8 +2229,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 purchaseType: String(source.purchaseType || source.poType || 'ĐNMH').trim() || 'ĐNMH',
                 purchaseDocumentNo: String(source.purchaseDocumentNo ?? source.documentNo ?? source.docNo ?? '').trim(),
                 itemIds,
-                invoiceNo: String(source.invoiceNo ?? '').trim(),
-                invoiceDate: source.invoiceDate ? (function(){ try { const r=parseExcelDate(source.invoiceDate); return r.valid ? r.value : ''; } catch(e){ return ''; } })() : '',
+                invoiceNo: parsedInvoice.invoiceNo || String(source.invoiceNo ?? '').trim(),
+                invoiceDate: explicitInvoiceDate || parsedInvoice.invoiceDate || '',
                 status: normalizedStatus,
                 stage: normalizedStage,
                 sentAt: String(source.sentAt || ''),
@@ -2261,16 +2258,19 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         function getOrderInvoiceInfo(order) {
             const po = getPurchaseOrderForItem(order);
             if (po) {
+                const poInvoice = parseInvoiceCellValue(po.invoiceNo);
+                const itemInvoice = parseInvoiceCellValue(order?.invoiceNo);
                 return {
-                    invoiceNo: String(po.invoiceNo ?? '').trim(),
-                    invoiceDate: String(po.invoiceDate ?? '').trim(),
+                    invoiceNo: poInvoice.invoiceNo || itemInvoice.invoiceNo || '',
+                    invoiceDate: normalizeInvoiceDateValue(po.invoiceDate) || itemInvoice.invoiceDate || normalizeInvoiceDateValue(order?.invoiceDate) || '',
                     source: 'PO',
                     po
                 };
             }
+            const parsedItemInvoice = parseInvoiceCellValue(order?.invoiceNo);
             return {
-                invoiceNo: String(order?.invoiceNo ?? '').trim(),
-                invoiceDate: String(order?.invoiceDate ?? '').trim(),
+                invoiceNo: parsedItemInvoice.invoiceNo || '',
+                invoiceDate: normalizeInvoiceDateValue(order?.invoiceDate) || parsedItemInvoice.invoiceDate || '',
                 source: 'LEGACY_ITEM',
                 po: null
             };
@@ -2287,10 +2287,22 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             );
         }
 
+        // Chuẩn hóa các nhãn giai đoạn để bộ lọc và trạng thái dùng cùng một quy tắc.
+        function normalizePurchaseStageValue(stage) {
+            const raw = String(stage ?? '').trim();
+            const key = normalizeSearchText(raw);
+            if (!key || key === 'ssg') return 'SSG';
+            if (key === 'dat hang' || key === 'da dat hang' || key === 'dat hang roi') return 'Đặt hàng';
+            if (key === 'da giao hang' || key === 'da nhan hang') return 'Đã giao hàng';
+            if (key === 'phat hanh hoa don' || key === 'phat hanh hoa don roi') return 'Phát hành Hóa đơn';
+            if (key === 'lam dntt' || key === 'lam de nghi thanh toan') return 'Làm ĐNTT';
+            return raw || 'SSG';
+        }
+
         // Các giai đoạn từ Đặt hàng trở đi đều được xem là Đã đặt.
         function isPlacedStageValue(stage) {
             const stageKey = normalizeSearchText(stage || '');
-            return ['dat hang', 'da dat hang', 'da giao hang', 'phat hanh hoa don', 'lam dntt'].includes(stageKey);
+            return ['dat hang', 'da dat hang', 'dat hang roi', 'da giao hang', 'da nhan hang', 'phat hanh hoa don', 'phat hanh hoa don roi', 'lam dntt', 'lam de nghi thanh toan'].includes(stageKey);
         }
 
         function isOrderStageConsideredPlaced(order) {
@@ -2410,6 +2422,35 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             }
         }
 
+        // Excel column K may contain both invoice number and invoice date, e.g.
+        // "1115 (18/09/2026)". Split these values so Tab 4 can display and group invoices.
+        function parseInvoiceCellValue(value) {
+            const raw = String(value ?? '').trim();
+            if (!raw) return { invoiceNo: '', invoiceDate: '' };
+
+            const datePattern = /\(?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{4}|\d{4}[\/.\-]\d{1,2}[\/.\-]\d{1,2})(?:\s*\))?/;
+            const match = raw.match(datePattern);
+            let invoiceDate = '';
+            let invoiceNo = raw;
+            if (match) {
+                try {
+                    const parsed = parseExcelDate(match[1]);
+                    if (parsed?.valid) invoiceDate = String(parsed.value).slice(0, 10);
+                } catch (e) { /* Keep the date blank if Excel provides an invalid date. */ }
+                invoiceNo = raw.replace(match[0], ' ');
+            }
+            invoiceNo = invoiceNo
+                .replace(/[()\[\]]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .replace(/^[\s|:,;\/\-–—]+|[\s|:,;\/\-–—]+$/g, '')
+                .trim();
+            return { invoiceNo, invoiceDate };
+        }
+
+        function normalizeInvoiceGroupKey(value) {
+            return normalizeHeader(parseInvoiceCellValue(value).invoiceNo || value || '');
+        }
+
         // One-time safe migration from legacy item-level invoice fields to PO level.
         // Only migrates when EVERY current PO item has the exact same non-empty invoice
         // number + invoice date. Conflicting legacy invoices are never auto-merged.
@@ -2459,6 +2500,176 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 console.warn('[ProcureFlow][Invoice Migration] Legacy item-level invoice data is inconsistent. No automatic merge was performed.', warnings);
             }
             return { changed, warnings };
+        }
+
+        // Ensure every order with the same invoice number is linked to one PO.
+        // Used both after Excel import and when loading previously saved browser data.
+        function ensureInvoiceGroupedPurchaseOrders() {
+            let changedOrders = false;
+            let changedPOs = false;
+            const stageRank = { 'SSG': 0, 'Đặt hàng': 1, 'Đã giao hàng': 2, 'Phát hành Hóa đơn': 3, 'Làm ĐNTT': 4 };
+            const normalizeStage = value => {
+                const stage = normalizePurchaseStageValue(value || 'SSG');
+                return Object.prototype.hasOwnProperty.call(stageRank, stage) ? stage : 'SSG';
+            };
+            const preferredStage = values => values.map(normalizeStage).reduce((best, stage) =>
+                (stageRank[stage] > stageRank[best] ? stage : best), 'SSG');
+
+            // Normalize old item-level invoice text and ensure stage-derived status is consistent.
+            orders.forEach(order => {
+                if (!order) return;
+                const parsed = parseInvoiceCellValue(order.invoiceNo);
+                if (parsed.invoiceNo && String(order.invoiceNo || '').trim() !== parsed.invoiceNo) {
+                    order.invoiceNo = parsed.invoiceNo;
+                    changedOrders = true;
+                }
+                const normalizedDate = normalizeInvoiceDateValue(order.invoiceDate) || parsed.invoiceDate;
+                if (normalizedDate && String(order.invoiceDate || '').slice(0, 10) !== normalizedDate) {
+                    order.invoiceDate = normalizedDate;
+                    changedOrders = true;
+                }
+                const normalizedStage = normalizeStage(order.stage);
+                if (String(order.stage || '') !== normalizedStage) {
+                    order.stage = normalizedStage;
+                    changedOrders = true;
+                }
+                const hasInvoice = Boolean(parsed.invoiceNo || normalizedDate);
+                if (isPlacedStageValue(normalizedStage) || hasInvoice) {
+                    if (order.orderPlaced !== true) { order.orderPlaced = true; changedOrders = true; }
+                    if (!String(order.orderedAt || order.orderPlacedAt || '').trim()) {
+                        order.orderedAt = String(order.date || getTodayISO());
+                        order.orderPlacedAt = order.orderedAt;
+                        changedOrders = true;
+                    }
+                    if (!String(order.orderPlacedAt || '').trim()) { order.orderPlacedAt = order.orderedAt; changedOrders = true; }
+                    if (hasInvoice && String(order.deliveryStatus || '') !== 'Đã giao') { order.deliveryStatus = 'Đã giao'; changedOrders = true; }
+                    if ((hasInvoice || normalizeSearchText(normalizedStage) === 'da giao hang') && !String(order.deliveredAt || '').trim()) {
+                        order.deliveredAt = String(order.orderedAt || order.date || getTodayISO());
+                        changedOrders = true;
+                    }
+                }
+            });
+
+            // First normalize existing PO invoice metadata and find duplicate invoice POs.
+            const existingByInvoice = new Map();
+            purchaseOrders.forEach(po => {
+                if (!po) return;
+                const parsed = parseInvoiceCellValue(po.invoiceNo);
+                if (parsed.invoiceNo && String(po.invoiceNo || '').trim() !== parsed.invoiceNo) {
+                    po.invoiceNo = parsed.invoiceNo;
+                    changedPOs = true;
+                }
+                const invDate = normalizeInvoiceDateValue(po.invoiceDate) || parsed.invoiceDate;
+                if (invDate && String(po.invoiceDate || '').slice(0, 10) !== invDate) {
+                    po.invoiceDate = invDate;
+                    changedPOs = true;
+                }
+                const key = normalizeInvoiceGroupKey(parsed.invoiceNo || po.invoiceNo);
+                if (!key) return;
+                if (!existingByInvoice.has(key)) existingByInvoice.set(key, []);
+                existingByInvoice.get(key).push(po);
+            });
+
+            // Canonical PO for each invoice number; merge duplicate PO records with that invoice.
+            existingByInvoice.forEach((matches, key) => {
+                if (matches.length < 2) return;
+                const primary = matches[0];
+                matches.slice(1).forEach(duplicate => {
+                    const duplicateId = String(duplicate.poId || '');
+                    primary.itemIds = [...new Set([...getPurchaseOrderItemIds(primary), ...getPurchaseOrderItemIds(duplicate)])];
+                    orders.forEach(order => {
+                        if (String(order.purchaseOrderId || '') === duplicateId) order.purchaseOrderId = String(primary.poId);
+                    });
+                    purchaseOrders = purchaseOrders.filter(po => String(po.poId) !== duplicateId);
+                    changedPOs = true;
+                    changedOrders = true;
+                });
+                existingByInvoice.set(key, [primary]);
+            });
+
+            // Group imported/legacy invoice-bearing items by invoice number, not item or order group.
+            const itemGroups = new Map();
+            orders.forEach(order => {
+                if (!order) return;
+                const parsed = parseInvoiceCellValue(order.invoiceNo);
+                const invoiceNo = parsed.invoiceNo;
+                if (!invoiceNo) return;
+                const key = normalizeInvoiceGroupKey(invoiceNo);
+                if (!key) return;
+                if (!itemGroups.has(key)) itemGroups.set(key, { invoiceNo, items: [], dates: [] });
+                const group = itemGroups.get(key);
+                group.items.push(order);
+                const invoiceDate = normalizeInvoiceDateValue(order.invoiceDate) || parsed.invoiceDate;
+                if (invoiceDate && !group.dates.includes(invoiceDate)) group.dates.push(invoiceDate);
+            });
+
+            let sequence = 1;
+            itemGroups.forEach((group, key) => {
+                let matches = (existingByInvoice.get(key) || []).filter(po => purchaseOrders.some(current => String(current.poId) === String(po.poId)));
+                let po = matches[0] || null;
+                if (!po) {
+                    const slug = key.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toUpperCase() || String(sequence);
+                    const poId = `PO-INV-${slug}`;
+                    po = normalizePurchaseOrderRecord({
+                        poId,
+                        poNumber: `PO-HĐ-${slug}`,
+                        supplier: '',
+                        poDate: group.dates[0] || group.items[0]?.date || getTodayISO(),
+                        createdAt: getNowISO(),
+                        createdBy: 'Excel Import / Invoice Migration',
+                        purchaseType: '',
+                        itemIds: [],
+                        invoiceNo: group.invoiceNo,
+                        invoiceDate: group.dates[0] || '',
+                        status: 'Hoàn thành',
+                        stage: 'Phát hành Hóa đơn',
+                        invoiceGroupingSource: 'INVOICE_NUMBER'
+                    }, purchaseOrders.length + sequence, new Set(purchaseOrders.map(p => String(p.poId))));
+                    purchaseOrders.push(po);
+                    existingByInvoice.set(key, [po]);
+                    changedPOs = true;
+                }
+                sequence++;
+
+                const items = group.items;
+                const itemIds = items.map(item => String(item.id));
+                const supplierNames = [...new Set(items.map(item => String(item.supplier || '').trim()).filter(Boolean))];
+                const purchaseTypes = [...new Set(items.map(item => String(item.checkType || item.purchaseType || '').trim()).filter(Boolean))];
+                const stageCandidates = [po.stage, ...items.map(item => item.stage)];
+                const advancedStage = preferredStage(stageCandidates.concat('Phát hành Hóa đơn'));
+                const invoiceDate = group.dates[0] || normalizeInvoiceDateValue(po.invoiceDate) || '';
+
+                // If the same item was linked to another PO, move the relationship to this invoice PO.
+                items.forEach(item => {
+                    const oldPoId = String(item.purchaseOrderId || '').trim();
+                    if (oldPoId && oldPoId !== String(po.poId)) {
+                        const oldPo = getPurchaseOrderById(oldPoId);
+                        if (oldPo) oldPo.itemIds = getPurchaseOrderItemIds(oldPo).filter(id => String(id) !== String(item.id));
+                        item.purchaseOrderId = String(po.poId);
+                        changedOrders = true;
+                        changedPOs = true;
+                    } else if (oldPoId !== String(po.poId)) {
+                        item.purchaseOrderId = String(po.poId);
+                        changedOrders = true;
+                    }
+                });
+
+                const linkedIds = [...new Set([...getPurchaseOrderItemIds(po), ...itemIds])];
+                if (JSON.stringify(getPurchaseOrderItemIds(po)) !== JSON.stringify(linkedIds)) { po.itemIds = linkedIds; changedPOs = true; }
+                if (String(po.invoiceNo || '').trim() !== group.invoiceNo) { po.invoiceNo = group.invoiceNo; changedPOs = true; }
+                if (invoiceDate && normalizeInvoiceDateValue(po.invoiceDate) !== invoiceDate) { po.invoiceDate = invoiceDate; changedPOs = true; }
+                if (normalizeStage(po.stage) !== advancedStage) { po.stage = advancedStage; changedPOs = true; }
+                if (String(po.status || '') === 'Draft' || !po.status) { po.status = 'Hoàn thành'; changedPOs = true; }
+                if (supplierNames.length === 1 && String(po.supplier || '') !== supplierNames[0]) { po.supplier = supplierNames[0]; changedPOs = true; }
+                else if (supplierNames.length > 1 && String(po.supplier || '') !== 'Nhiều NCC (cần kiểm tra)') { po.supplier = 'Nhiều NCC (cần kiểm tra)'; changedPOs = true; }
+                if (purchaseTypes.length === 1 && String(po.purchaseType || '') !== purchaseTypes[0]) { po.purchaseType = purchaseTypes[0]; changedPOs = true; }
+                else if (purchaseTypes.length > 1 && String(po.purchaseType || '') !== 'Nhiều hình thức') { po.purchaseType = 'Nhiều hình thức'; changedPOs = true; }
+                if (!po.poDate) { po.poDate = invoiceDate || group.items[0]?.date || getTodayISO(); changedPOs = true; }
+                po.invoiceGroupingSource = 'INVOICE_NUMBER';
+            });
+
+            if (changedPOs || changedOrders) syncPurchaseOrderReferences();
+            return { changed: changedPOs || changedOrders, changedOrders, changedPOs };
         }
 
         function getLegacyPOInvoiceConsistency(po, items = null) {
@@ -2833,7 +3044,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         function getPurchaseOrderStage(po) {
             if (!po) return 'SSG';
-            const raw = String(po.stage || '').trim();
+            const raw = normalizePurchaseStageValue(po.stage || 'SSG');
             return PURCHASE_ORDER_STAGES.includes(raw) ? raw : 'SSG';
         }
 
@@ -4846,7 +5057,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                         <div class="font-semibold text-sm text-slate-800">${escapeHTML(o.item || '-')}</div>
                                         <div class="text-[11px] text-slate-500 mt-1">${o.qty || 0} ${escapeHTML(o.unit || '')} • ${escapeHTML(o.supplier || '-')} • ${escapeHTML(o.checkType || 'ĐNMH')}</div>
                                         <div class="text-[11px] text-slate-600 mt-1">Đơn giá: ${Number.isFinite(Number(o.purchasePrice)) ? escapeHTML(formatPurchaseMoney(o.purchasePrice)) : '-'} • Thành tiền: ${Number.isFinite(value) ? escapeHTML(formatPurchaseMoney(value)) : '-'}</div>
-                                        <div class="text-[11px] text-slate-500 mt-1">Trạng thái: ${escapeHTML(o.stage || '-')} • ${o.orderPlaced ? `Đã đặt ${escapeHTML(formatDateTimeVN(o.orderedAt))}` : 'Chưa đặt'}</div>
+                                        <div class="text-[11px] text-slate-500 mt-1">Trạng thái: ${escapeHTML(o.stage || '-')} • ${isOrderActuallyPlaced(o) ? `Đã đặt ${escapeHTML(formatDateTimeVN(o.orderedAt || o.orderPlacedAt || o.date))}` : 'Chưa đặt'}</div>
                                     </div>
                                     <div class="flex flex-wrap items-center gap-2">
                                         <button type="button" onclick='splitItemFromPurchaseOrder(${JSON.stringify(o.id)}, ${JSON.stringify(po.poId)})' class="px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 text-[11px] font-semibold hover:bg-amber-100">Tách khỏi PO</button>
@@ -4925,6 +5136,9 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 stableId = createStableOrderId(existingIds);
             }
             existingIds.add(String(stableId));
+            const parsedInvoice = parseInvoiceCellValue(source.invoiceNo);
+            const explicitInvoiceDate = source.invoiceDate ? normalizeInvoiceDateValue(source.invoiceDate) : '';
+            const normalizedStage = normalizePurchaseStageValue(source.stage || 'SSG');
 
             return {
                 ...source,
@@ -4942,12 +5156,12 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 supplier: String(source.supplier ?? '').trim(),
                 contractNo: String(source.contractNo ?? '').trim(),
                 contractItemNo: normalizeContractItemNoValue(source.contractItemNo, source.checkType || 'ĐNMH'),
-                stage: String(source.stage || 'SSG').trim() || 'SSG',
-                invoiceNo: String(source.invoiceNo ?? ''),
-                invoiceDate: source.invoiceDate ? (function(){ try { const r=parseExcelDate(source.invoiceDate); return r.valid ? r.value : ''; } catch(e){ return ''; } })() : '',
+                stage: normalizedStage,
+                invoiceNo: parsedInvoice.invoiceNo || String(source.invoiceNo ?? '').trim(),
+                invoiceDate: explicitInvoiceDate || parsedInvoice.invoiceDate || '',
                 stageTimes: (source.stageTimes && typeof source.stageTimes === 'object' && !Array.isArray(source.stageTimes)) ? source.stageTimes : {},
                 stageChangedAt: String(source.stageChangedAt ?? ''),
-                orderPlaced: source.orderPlaced === true || Boolean(source.orderedAt || source.orderPlacedAt) || isPlacedStageValue(source.stage),
+                orderPlaced: source.orderPlaced === true || Boolean(source.orderedAt || source.orderPlacedAt) || isPlacedStageValue(normalizedStage) || Boolean(parsedInvoice.invoiceNo || explicitInvoiceDate || parsedInvoice.invoiceDate),
                 orderedAt: String(source.orderedAt ?? source.orderPlacedAt ?? ''),
                 orderPlacedAt: String(source.orderPlacedAt ?? source.orderedAt ?? ''),
                 orderedBy: String(source.orderedBy ?? source.orderByPlaced ?? ''),
@@ -5646,6 +5860,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             syncPurchaseOrderReferences();
 
             const purchaseOrderInvoiceMigration = migrateLegacyInvoicesToPO();
+            const invoiceGroupingMigration = ensureInvoiceGroupedPurchaseOrders();
             const orderGroupMigrationNeeded = ensureOrderGroupIdsInMemory();
 
             orders.forEach(order => {
@@ -5671,11 +5886,11 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             if (raw.procure_quotes) console.log(`[ProcureFlow] Quote metadata size: ${raw.procure_quotes.length}`);
             ensureSupplierContractsFromOrders();
 
-            if (orderGroupMigrationNeeded || purchaseOrderInvoiceMigration.changed) {
-                // Persist safe migrations after the initial render baseline is ready.
+            if (orderGroupMigrationNeeded || purchaseOrderInvoiceMigration.changed || invoiceGroupingMigration.changed) {
+                // Persist safe stage/invoice migrations after the initial render baseline is ready.
                 const forceKeys = [];
-                if (orderGroupMigrationNeeded) forceKeys.push('procure_orders');
-                if (purchaseOrderInvoiceMigration.changed) forceKeys.push('procure_purchase_orders');
+                if (orderGroupMigrationNeeded || invoiceGroupingMigration.changedOrders) forceKeys.push('procure_orders');
+                if (purchaseOrderInvoiceMigration.changed || invoiceGroupingMigration.changedPOs) forceKeys.push('procure_purchase_orders');
                 setTimeout(() => {
                     saveToStorage({ forceKeys, suppressAlert: true, reloadOnFailure: false });
                 }, 0);
@@ -6304,6 +6519,24 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             } else {
                 order.orderPlaced = order.orderPlaced === true;
             }
+            order.stage = normalizePurchaseStageValue(order.stage || 'SSG');
+            const hasLegacyInvoiceEvidence = Boolean(
+                parseInvoiceCellValue(order.invoiceNo).invoiceNo ||
+                normalizeInvoiceDateValue(order.invoiceDate)
+            );
+            if (isPlacedStageValue(order.stage) || hasLegacyInvoiceEvidence) {
+                order.orderPlaced = true;
+                if (!String(order.orderedAt || order.orderPlacedAt || '').trim()) {
+                    order.orderedAt = String(order.date || getTodayISO());
+                    order.orderPlacedAt = order.orderedAt;
+                }
+                if (hasLegacyInvoiceEvidence && String(order.deliveryStatus || '').trim() === 'Chưa giao') {
+                    order.deliveryStatus = 'Đã giao';
+                }
+                if ((normalizeSearchText(order.stage) === 'da giao hang' || hasLegacyInvoiceEvidence) && !String(order.deliveredAt || '').trim()) {
+                    order.deliveredAt = String(order.orderedAt || order.date || getTodayISO());
+                }
+            }
             if (order.orderedBy === null || order.orderedBy === undefined) order.orderedBy = '';
             if (order.orderPlacementNote === null || order.orderPlacementNote === undefined) order.orderPlacementNote = '';
             if (order.purchasePrice === undefined) order.purchasePrice = null;
@@ -6351,7 +6584,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         function getOrderPlacementFilterMatch(order, filter) {
             // Có hóa đơn được tính là đã đặt và đã nhận hàng.
-            const placed = order?.orderPlaced === true || hasOrderInvoice(order);
+            const placed = isOrderActuallyPlaced(order);
             const delivered = isOrderConsideredDelivered(order);
 
             if (filter === 'Chưa đặt') return !placed;
@@ -6690,7 +6923,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             purchaseOrders.forEach(po => {
                 if (po.status === 'Đã gửi NCC' && getPurchaseOrderItemIds(po).includes(String(order.id))) {
                     const items = getPurchaseOrderItems(po);
-                    if (items.length && !items.every(x => x.orderPlaced === true)) {
+                    if (items.length && !items.every(isOrderActuallyPlaced)) {
                         po.status = 'Draft';
                         po.sentAt = '';
                         po.sentBy = '';
@@ -6987,7 +7220,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 hasResult = true;
 
                 const formattedDate = formatDateVN(group.date);
-                const placedCount = filteredItems.filter(o => o.orderPlaced === true).length;
+                const placedCount = filteredItems.filter(isOrderActuallyPlaced).length;
                 const unplacedCount = filteredItems.length - placedCount;
                 const searchActive = !!search;
                 const totalCount = searchActive ? filteredItems.length : getOrderGroupItems(group.orderGroupId).length;
@@ -7043,16 +7276,17 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
                 filteredItems.forEach((o, idx) => {
                     ensureOrderTrackingFields(o);
-                    const placed = o.orderPlaced === true && !!o.orderedAt;
+                    const placed = isOrderActuallyPlaced(o);
                     const delivered = isOrderConsideredDelivered(o);
-                    const elapsedStatus = placed ? getOrderElapsedStatus(o.orderedAt) : null;
+                    const placedAtForStatus = o.orderedAt || o.orderPlacedAt || o.date;
+                    const elapsedStatus = placed ? getOrderElapsedStatus(placedAtForStatus) : null;
                     const statusBadge = delivered
                         ? '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-indigo-50 text-indigo-700 border-indigo-200">✓ Đã giao</span>'
                         : placed
                             ? `<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold ${elapsedStatus.cls}">🟢 Đã đặt</span>`
                             : '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-slate-100 text-slate-600 border-slate-200">⚪ Chưa đặt</span>';
                     const timeHtml = placed
-                        ? `<div class="text-[11px] text-slate-500">${formatDateTimeVN(o.orderedAt)}</div><div data-order-timer-id="${String(o.id).replace(/[^\w-]/g, '')}" class="order-placement-timer text-[11px] font-semibold mt-1"></div>`
+                        ? `<div class="text-[11px] text-slate-500">${formatDateTimeVN(placedAtForStatus)}</div><div data-order-timer-id="${String(o.id).replace(/[^\w-]/g, '')}" class="order-placement-timer text-[11px] font-semibold mt-1"></div>`
                         : '<span class="text-xs text-slate-400">-</span>';
                     const purchase = getPurchaseDisplay(o);
                     html += `
@@ -10796,7 +11030,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                             <td class="py-3 px-3 text-xs text-slate-600">${escapeHTML(getOrderPlacementPurchaseType(o) || '-')}</td>
                                             <td class="py-3 px-3 text-xs text-right font-semibold text-slate-800">${escapeHTML(price)}</td>
                                             <td class="py-3 px-3 text-xs min-w-[180px]">
-                                                <div>${o.orderPlaced === true ? '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-emerald-50 text-emerald-700 border-emerald-200">🟢 Đã mua</span>' : '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-slate-100 text-slate-600 border-slate-200">⚪ Chưa mua</span>'}</div>
+                                                <div>${isOrderActuallyPlaced(o) ? '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-emerald-50 text-emerald-700 border-emerald-200">🟢 Đã đặt</span>' : '<span class="inline-flex items-center px-2 py-1 rounded border text-[11px] font-semibold bg-slate-100 text-slate-600 border-slate-200">⚪ Chưa đặt</span>'}</div>
                                                 ${placedAt ? `<div class="text-[10px] text-indigo-600 mt-1">Đã đặt: ${escapeHTML(placedAt)}</div>` : ''}
                                                 <div class="text-[10px] text-slate-400 mt-1">PO: Chưa có</div>
                                             </td>
@@ -10882,7 +11116,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             if (!hasSearch) {
                 noPO = sortedList.filter(item => !getStatusPOForItem(item));
             }
-            if (filterStage !== 'Tất cả') noPO = noPO.filter(item => String(item?.stage || '') === filterStage);
+            if (filterStage !== 'Tất cả') noPO = noPO.filter(item => normalizePurchaseStageValue(item?.stage || 'SSG') === normalizePurchaseStageValue(filterStage));
 
             if (!isHasPOFilter && !isStatusPOFilter && !isConcretePO) {
                 if (!hasSearch || searchMode === 'ITEM' || ['FROM', 'DATE', 'DOCUMENT', 'SUPPLIER'].includes(searchMode)) {
@@ -11388,7 +11622,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             price: ["giá", "đơn giá", "đơn giá mua", "price", "purchase price"],
             purchaseValue: ["giá trị mua", "thành tiền", "purchase value", "purchase amount"],
             stage: ["giai đoạn", "trạng thái", "status", "stage"],
-            invoiceNo: ["hóa đơn", "hoa don", "số hóa đơn", "số hđ hóa đơn", "invoice", "invoice no", "invoice number"],
+            invoiceNo: ["hóa đơn", "hoa don", "số hóa đơn", "số hđ hóa đơn", "invoice", "invoice no", "invoice number", "hóa đơn số", "số hóa đơn (ngày)"],
+            invoiceDate: ["ngày hóa đơn", "ngày hoá đơn", "ngày hđ", "invoice date", "invoice date issued"],
             area: ["khu vực", "area", "location", "region"],
             note: ["ghi chú", "note", "notes", "remark", "remarks"],
             by: ["người order", "by", "ordered by", "requester"],
@@ -11632,7 +11867,16 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             }
 
             const checkType = String(getField('checkType') || 'ĐNMH').trim() || 'ĐNMH';
-            const stage = String(getField('stage') || 'SSG').trim() || 'SSG';
+            const stage = normalizePurchaseStageValue(getField('stage') || 'SSG');
+            const rawInvoice = getField('invoiceNo');
+            const parsedInvoice = parseInvoiceCellValue(rawInvoice);
+            const rawInvoiceDate = getField('invoiceDate');
+            let explicitInvoiceDate = '';
+            if (rawInvoiceDate) {
+                try { const parsedDate = parseExcelDate(rawInvoiceDate); if (parsedDate?.valid) explicitInvoiceDate = String(parsedDate.value).slice(0, 10); } catch (e) {}
+            }
+            const invoiceNo = parsedInvoice.invoiceNo || String(rawInvoice || '').trim();
+            const invoiceDate = explicitInvoiceDate || parsedInvoice.invoiceDate || '';
             const purchasePrice = priceResult.value;
             const purchaseValue = valueResult.value !== null && valueResult.value !== undefined
                 ? valueResult.value
@@ -11660,7 +11904,8 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     purchasePrice,
                     purchaseValue,
                     stage,
-                    invoiceNo: String(getField('invoiceNo') || '').trim(),
+                    invoiceNo,
+                    invoiceDate,
                     supplierAsked: String(getField('supplierAsked') || '').trim(),
                     supplierAsked2: String(getField('supplierAsked2') || '').trim(),
                     contractTracking: String(getField('contractTracking') || '').trim(),
@@ -11786,7 +12031,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             const displayNames = {
                 date: 'Ngày Order', restaurant: 'From (Bộ phận)', item: 'Tên mặt hàng', qtyUnit: 'SL & ĐVT',
                 qty: 'Số lượng', unit: 'ĐVT', area: 'Khu vực', checkType: 'Hình thức', supplier: 'Nhà Cung Cấp',
-                price: 'Đơn giá mua', purchaseValue: 'Giá trị mua', stage: 'Giai đoạn', invoiceNo: 'Hóa đơn',
+                price: 'Đơn giá mua', purchaseValue: 'Giá trị mua', stage: 'Giai đoạn', invoiceNo: 'Hóa đơn', invoiceDate: 'Ngày Hóa đơn',
                 orderTime: 'Thời gian order', note: 'Ghi chú', by: 'Người order', supplierAsked: 'NCC hỏi giá',
                 supplierAsked2: 'NCC hỏi giá (1)', contractTracking: 'Theo dõi HĐ', contractNo: 'Số HĐ',
                 contractItemNo: 'STT HĐ', orderGroupId: 'Mã đơn / PO'
@@ -11841,9 +12086,10 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     const groupKey = explicitGroup || `__ROW_${row.rowNumber}`;
                     if (!importGroups.has(groupKey)) importGroups.set(groupKey, explicitGroup || createOrderGroupId(row.data.date));
                     const orderGroupId = importGroups.get(groupKey);
-                    const importedStage = String(row.data.stage || 'SSG').trim() || 'SSG';
+                    const importedStage = normalizePurchaseStageValue(row.data.stage || 'SSG');
                     const stageKey = normalizeSearchText(importedStage);
-                    const invoiceNo = String(row.data.invoiceNo || '').trim();
+                    const invoiceNo = parseInvoiceCellValue(row.data.invoiceNo).invoiceNo;
+                    const invoiceDate = normalizeInvoiceDateValue(row.data.invoiceDate) || parseInvoiceCellValue(row.data.invoiceNo).invoiceDate || '';
                     const hasInvoice = Boolean(invoiceNo);
                     const sourceOrderTime = String(row.data.orderTime || '').trim();
                     const isPlaced = Boolean(sourceOrderTime) || hasInvoice || isPlacedStageValue(importedStage);
@@ -11873,7 +12119,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                         purchaseValue: row.data.purchaseValue,
                         purchasePriceSource: row.data.purchasePrice !== null && row.data.purchasePrice !== undefined ? 'Manual' : '',
                         invoiceNo,
-                        invoiceDate: '',
+                        invoiceDate,
                         stageTimes: {},
                         orderPlaced: isPlaced,
                         orderedAt: placedDate,
@@ -11905,6 +12151,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 trackingHistory = [];
                 quoteRequests = [];
                 purchaseOrders = [];
+                ensureInvoiceGroupedPurchaseOrders();
                 supplierContracts = {};
                 const supplierSet = new Map();
                 rowsToImport.forEach(row => {
@@ -11918,6 +12165,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 const duplicateCount = pendingExcelImport.duplicates.length;
                 const errorCount = pendingExcelImport.errors.length;
                 const loadedCount = importedOrders.length;
+                const invoicePOCount = purchaseOrders.length;
                 saveToStorage().then(ok => {
                     if (ok === false) throw new Error('Không lưu được dữ liệu thay thế vào bộ nhớ trình duyệt.');
                     previousProductImageKeys.forEach(imageKey => {
@@ -11932,6 +12180,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                     alert(
                         `Thay thế dữ liệu thành công!\n\nNguồn: ${sourceFile} / Sheet ${sourceSheet}\n` +
                         `Đã nạp: ${loadedCount} order\n` +
+                        `PO được nhóm theo số hóa đơn: ${invoicePOCount}\n` +
                         `Dòng trùng trong Excel vẫn được giữ: ${duplicateCount}\n` +
                         `Dòng lỗi bỏ qua: ${errorCount}\n\n` +
                         `Danh sách báo giá, lịch sử theo dõi, hợp đồng NCC và PO cũ đã được xóa khỏi dữ liệu đang dùng.`
