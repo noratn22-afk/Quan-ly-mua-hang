@@ -2000,11 +2000,18 @@
                 group?.contractNo, group?.invoiceNo, group?.invoiceDate,
                 formatDateVN(group?.invoiceDate), group?.by, group?.orderNumber
             ];
-            const itemText = items.flatMap(o => [
-                o?.id, o?.item, o?.area, o?.unit, o?.note,
-                o?.contractItemNo, o?.stage, o?.deliveryStatus,
-                o?.purchaseOrderId
-            ]);
+            const itemText = items.flatMap(o => {
+                const linkedPO = getPurchaseOrderForItem(o);
+                return [
+                    o?.id, o?.item, o?.area, o?.unit, o?.note,
+                    o?.supplier, o?.contractItemNo, o?.contractNo, o?.stage, o?.deliveryStatus,
+                    o?.purchaseOrderId, o?.invoiceNo, o?.invoiceDate,
+                    formatDateVN(o?.invoiceDate), o?.orderNo, o?.requestNo, o?.requisitionNo,
+                    linkedPO?.poNumber, linkedPO?.poId, linkedPO?.supplier,
+                    linkedPO?.invoiceNo, linkedPO?.invoiceDate, formatDateVN(linkedPO?.invoiceDate),
+                    linkedPO?.poDate, formatDateVN(linkedPO?.poDate)
+                ];
+            });
             return normalizeSearchText([...common, ...poText, ...itemText].filter(Boolean).join(' '));
         }
 
@@ -5942,20 +5949,40 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
         // --- TAB 1: ORDERS LOGIC ---
         function renderOrders() {
-            const search = normalizeSearchText(document.getElementById('search-order')?.value || '');
+            const rawSearch = String(document.getElementById('search-order')?.value || '').trim();
+            const search = normalizeSearchText(rawSearch);
             const sortDir = document.getElementById('sort-order-date')?.value || 'desc';
             const tbody = document.getElementById('orders-table-body');
             if (!tbody) return;
             tbody.innerHTML = '';
 
-            // Tab 1 is rendered by Order Group, with orders[] as the single source of truth.
+            // Tab 1 search: exact item name wins, otherwise fuzzy item-name matching.
+            // For item-name queries, show only matching rows (not every sibling in the order group).
+            // For metadata queries (PO / From / supplier / date / invoice), keep the matching group visible.
             const sortedList = getSortedOrders(sortDir);
             const groups = getOrderGroups(sortedList);
-            const tokens = search.split(/\s+/).filter(Boolean);
-            const matchedGroups = groups.filter(group => {
-                const text = getOrderGroupSearchText(group);
-                return !tokens.length || tokens.every(token => text.includes(token));
-            });
+            const normalizedQuery = normalizeStatusItemSearchText(rawSearch);
+            const exactItemMatches = normalizedQuery
+                ? sortedList.filter(o => normalizeStatusItemSearchText(o?.item || '') === normalizedQuery)
+                : [];
+            const fuzzyItemMatches = normalizedQuery && !exactItemMatches.length
+                ? sortedList.filter(o => matchesStatusItemName(o, rawSearch))
+                : [];
+            const itemMatches = exactItemMatches.length ? exactItemMatches : fuzzyItemMatches;
+            const itemSearchActive = !!normalizedQuery && itemMatches.length > 0;
+            const matchedItemIds = new Set(itemMatches.map(o => String(o?.id ?? '')));
+            const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+            const matchedGroups = groups.map(group => {
+                let visibleItems = group.items;
+                if (itemSearchActive) {
+                    visibleItems = group.items.filter(o => matchedItemIds.has(String(o?.id ?? '')));
+                } else if (normalizedQuery) {
+                    const text = getOrderGroupSearchText(group);
+                    if (!tokens.every(token => text.includes(token))) return null;
+                }
+                if (!visibleItems.length) return null;
+                return { ...group, items: visibleItems };
+            }).filter(Boolean);
 
             const countEl = document.getElementById('order-count');
             if (countEl) countEl.innerText = matchedGroups.length;
@@ -5993,7 +6020,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                         <span class="text-xs text-slate-500">• ${escapeHTML(formatDateVN(group.date))}</span>
                                     </div>
                                     <div class="flex flex-wrap items-center gap-2 mt-2">
-                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-white text-slate-700 border border-slate-200 text-[11px] font-semibold">${group.items.length} mặt hàng</span>
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-white text-slate-700 border border-slate-200 text-[11px] font-semibold">${group.items.length}${itemSearchActive ? ' mặt hàng phù hợp' : ' mặt hàng'}</span>
                                         <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[11px] font-semibold">${placedSummary.placed} Đã đặt</span>
                                         <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-100 text-[11px] font-semibold">${placedSummary.delivered} Đã nhận hàng / có hóa đơn</span>
                                         <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[11px] font-semibold">${placedSummary.total - placedSummary.placed} Chưa đặt</span>
@@ -8513,7 +8540,9 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 group?.by,
                 ...items.flatMap(o => [
                     o?.id, o?.item, o?.area, o?.unit, o?.note,
-                    o?.contractItemNo, o?.stage, o?.deliveryStatus,
+                    o?.supplier, o?.contractNo, o?.contractItemNo, o?.stage, o?.deliveryStatus,
+                    o?.invoiceNo, o?.invoiceDate, formatDateVN(o?.invoiceDate),
+                    o?.purchaseOrderId, o?.orderNo, o?.requestNo, o?.requisitionNo,
                     ...getQuoteTrackingSummary(o).askedSuppliers,
                     ...getQuoteTrackingSummary(o).allQuotedSuppliers
                 ])
@@ -8838,6 +8867,15 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
             // 2. MAIN COMPARISON — ĐNMH only, grouped by explicit Order Group / PO.
             const groups = getOrderGroups(eligibleOrders);
+            const quoteQuery = normalizeStatusItemSearchText(search);
+            const exactQuoteItemIds = quoteQuery
+                ? new Set(eligibleOrders.filter(o => normalizeStatusItemSearchText(o?.item || '') === quoteQuery).map(o => String(o.id)))
+                : new Set();
+            const fuzzyQuoteItemIds = quoteQuery && !exactQuoteItemIds.size
+                ? new Set(eligibleOrders.filter(o => matchesStatusItemName(o, search)).map(o => String(o.id)))
+                : new Set();
+            const quoteItemMatchIds = exactQuoteItemIds.size ? exactQuoteItemIds : fuzzyQuoteItemIds;
+            const quoteItemSearchActive = !!quoteQuery && quoteItemMatchIds.size > 0;
             let hasAnyBlock = false;
             groups.forEach(group => {
 
@@ -8846,11 +8884,15 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 if (dateFilter && normalizeQuoteDateFilterKey(group.date) !== dateFilter) return;
 
                 const groupSearchText = buildQuoteGroupSearchText(group);
-                const groupSearchMatch = !searchInfo.normalized || quoteSearchMatchesAllTokens(groupSearchText, searchInfo.normalized);
+                const groupSearchMatch = quoteItemSearchActive
+                    ? group.items.some(o => quoteItemMatchIds.has(String(o.id)))
+                    : (!searchInfo.normalized || quoteSearchMatchesAllTokens(groupSearchText, searchInfo.normalized));
                 if (!groupSearchMatch) return;
 
-                // Search is group-level; quote status remains item-level.
-                const filteredGroupOrders = group.items.filter(o => doesOrderMatchQuoteStatus(o));
+                // Product searches display only the matching item(s); metadata searches keep the group scope.
+                const filteredGroupOrders = group.items.filter(o =>
+                    doesOrderMatchQuoteStatus(o) && (!quoteItemSearchActive || quoteItemMatchIds.has(String(o.id)))
+                );
 
                 if (!filteredGroupOrders.length) return;
                 hasAnyBlock = true;
@@ -10294,15 +10336,12 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
         function hasStatusInvoiceQueryMatch(po, order, query) {
             const q = normalizeStatusItemSearchText(query);
             if (!q) return false;
+            // Check both item-level legacy values and PO-level invoice values. Some older imports
+            // saved invoice information on the item even after that item was linked to a PO.
             const fields = [
-                po?.invoiceNo,
-                po?.invoiceDate,
-                formatDateVN(po?.invoiceDate)
+                order?.invoiceNo, order?.invoiceDate, formatDateVN(order?.invoiceDate),
+                po?.invoiceNo, po?.invoiceDate, formatDateVN(po?.invoiceDate)
             ];
-            // Legacy fallback is limited to items without a resolved PO.
-            if (!po) {
-                fields.push(order?.invoiceNo, order?.invoiceDate, formatDateVN(order?.invoiceDate));
-            }
             return fields.map(normalizeStatusItemSearchText).filter(Boolean)
                 .some(field => field === q || (q.length >= 3 && field.includes(q)));
         }
@@ -10317,6 +10356,9 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 order?.orderNo,
                 order?.code,
                 order?.itemCode,
+                order?.invoiceNo,
+                order?.invoiceDate,
+                formatDateVN(order?.invoiceDate),
                 po?.invoiceNo,
                 po?.invoiceDate,
                 formatDateVN(po?.invoiceDate)
@@ -10345,18 +10387,32 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             return !!q && !!from && (from === q || getStatusSearchTokens(q).every(t => from.includes(t)));
         }
 
+        function getStatusDateSearchVariants(value) {
+            const variants = [];
+            if (value === null || value === undefined || String(value).trim() === '') return variants;
+            variants.push(String(value), formatDateVN(value));
+            const key = normalizeQuoteDateFilterKey(value);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(String(key || ''))) {
+                const [year, month, day] = String(key).split('-');
+                variants.push(
+                    `${day}/${month}/${year}`, `${day}-${month}-${year}`,
+                    `${day}/${month}`, `${day}-${month}`, `${month}/${year}`,
+                    `${month}-${year}`, `${year}-${month}`, `${year}/${month}`, year
+                );
+            }
+            return [...new Set(variants.map(normalizeStatusItemSearchText).filter(Boolean))];
+        }
+
         function hasStatusDateQueryMatch(order, po, query) {
             const q = normalizeStatusItemSearchText(query);
             if (!q) return false;
-            const dateValues = [
-                order?.date,
-                po?.poDate,
-                po?.invoiceDate
-            ];
-            return dateValues.flatMap(v => [v, formatDateVN(v)])
-                .map(normalizeStatusItemSearchText)
-                .filter(Boolean)
-                .some(value => value === q);
+            const dateValues = [order?.date, po?.poDate, po?.invoiceDate];
+            const variants = dateValues.flatMap(getStatusDateSearchVariants);
+            if (variants.some(value => value === q)) return true;
+            // Allow common partial date queries like 15/10, 10/2026, or 2026-10.
+            if (q.length >= 4 && variants.some(value => value.includes(q))) return true;
+            const tokens = q.split(/\s+/).filter(Boolean);
+            return tokens.length > 1 && variants.some(value => tokens.every(token => value.includes(token)));
         }
 
         function getStatusSearchMode(query, dataset) {
@@ -10384,15 +10440,21 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 return poFields.includes(q);
             })) return 'PO';
 
-            // Invoice/document identifiers before generic metadata fields.
+            // Exact supplier / From matches should remain field-specific.
+            if (list.some(o => [o?.supplier, getStatusPOForItem(o)?.supplier]
+                .map(normalizeStatusItemSearchText).some(value => value && value === q))) return 'SUPPLIER';
+            if (list.some(o => normalizeStatusItemSearchText(o?.restaurant) === q)) return 'FROM';
+
+            // Item-name search comes before partial supplier/document matching so a product
+            // query does not accidentally resolve to a supplier or invoice field.
+            if (list.some(o => matchesStatusItemName(o, raw))) return 'ITEM';
+
             if (list.some(o => hasStatusInvoiceQueryMatch(getStatusPOForItem(o), o, raw))) return 'DOCUMENT';
             if (list.some(o => hasStatusDocumentQueryMatch(o, getStatusPOForItem(o), raw))) return 'DOCUMENT';
-
-            // Strong field-level searches.
             if (list.some(o => hasStatusSupplierQueryMatch(o, getStatusPOForItem(o), raw))) return 'SUPPLIER';
             if (list.some(o => hasStatusFromQueryMatch(o, raw))) return 'FROM';
 
-            // Fuzzy item search remains ITEM and never falls back to whole-object OR matching.
+            // A non-classified query still searches item names only.
             return 'ITEM';
         }
 
@@ -10666,19 +10728,19 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             `;
         }
 
-        function renderStatusItemRow(o, index, po = null) {
+        function renderStatusItemRow(o, index, po = null, isSearchMatch = false) {
             const placed = isOrderActuallyPlaced(o);
             const overdueInfo = getStatusItemOverdueInfo(o, po);
             const value = Number.isFinite(Number(o.purchaseValue))
                 ? Number(o.purchaseValue)
                 : (Number.isFinite(Number(o.purchasePrice)) && Number.isFinite(Number(o.qty)) ? Number(o.purchasePrice) * Number(o.qty) : null);
             return `
-                <tr class="${overdueInfo.overdue ? 'bg-rose-50/70 border-l-4 border-l-rose-500' : (placed ? 'bg-white' : 'bg-rose-50/40')} border-b border-slate-100 hover:bg-slate-50/80 align-top">
+                <tr class="${isSearchMatch ? 'bg-indigo-50/80 border-l-4 border-l-indigo-600' : (overdueInfo.overdue ? 'bg-rose-50/70 border-l-4 border-l-rose-500' : (placed ? 'bg-white' : 'bg-rose-50/40'))} border-b border-slate-100 hover:bg-slate-50/80 align-top">
                     <td class="py-3 px-3 text-xs font-semibold text-slate-500 text-center">${index + 1}</td>
                     <td class="py-3 px-3 text-xs font-semibold text-indigo-700 whitespace-nowrap">${escapeHTML(formatDateVN(o.date))}</td>
                     <td class="py-3 px-3 text-xs font-semibold text-slate-700 min-w-[170px]">${escapeHTML(o.restaurant || '-')}</td>
                     <td class="py-3 px-3 font-semibold ${overdueInfo.overdue ? 'text-rose-800' : (placed ? 'text-slate-800' : 'text-rose-800')} min-w-[220px]">
-                        <div>${escapeHTML(o.item || '-')}</div>
+                        <div>${escapeHTML(o.item || '-')} ${isSearchMatch ? '<span class="inline-flex items-center ml-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200 text-[9px] font-bold align-middle">Khớp tìm kiếm</span>' : ''}</div>
                         ${overdueInfo.overdue ? renderOverdueWarningHTML(overdueInfo, true) : ''}
                     </td>
                     ${renderProductImageCell(o)}
@@ -10837,11 +10899,12 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             `;
         }
 
-        function renderStatusPORows(po, visibleItems, info, allItems) {
+        function renderStatusPORows(po, visibleItems, info, allItems, matchedItemIds = null) {
             const rows = Array.isArray(visibleItems) ? visibleItems : [];
             if (!rows.length) return '';
             return rows.map((o, idx) => {
-                const rowHtml = renderStatusItemRow(o, idx, po);
+                const isSearchMatch = matchedItemIds instanceof Set && matchedItemIds.has(String(o?.id ?? ''));
+                const rowHtml = renderStatusItemRow(o, idx, po, isSearchMatch);
                 const rowOpen = rowHtml.replace(/\s*<\/tr>\s*$/, '');
                 const sharedCells = idx === 0 && po
                     ? `${renderStatusPOStageCell(po, info, rows.length)}${renderStatusPOInvoiceCell(po, allItems)}`
@@ -10913,7 +10976,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
-                                ${renderStatusPORows(po, visibleItems, info, allItems)}
+                                ${renderStatusPORows(po, visibleItems, info, allItems, options.matchedItemIds || null)}
                             </tbody>
                         </table>
                     </div>
@@ -11115,7 +11178,15 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 // its item list by item.stage.
                 if (filterStage !== 'Tất cả' && getPurchaseOrderStage(po) !== filterStage) return;
 
-                const visibleItems = allItems;
+                let visibleItems = allItems;
+                if (hasSearch && searchMode === 'ITEM') {
+                    // Keep the whole PO together, but put the product that matched the search first.
+                    visibleItems = [...allItems].sort((a, b) => {
+                        const aMatch = matchedItemIds.has(String(a?.id ?? '')) ? 1 : 0;
+                        const bMatch = matchedItemIds.has(String(b?.id ?? '')) ? 1 : 0;
+                        return bMatch - aMatch;
+                    });
+                }
                 if (!visibleItems.length) return;
 
                 blocks.push({ type: 'PO', po, items: visibleItems });
@@ -11181,7 +11252,7 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
                 : `<div class="mb-3 px-1 text-xs text-slate-500">Đang hiển thị <span class="font-bold text-slate-800">${renderedPOs} PO</span> • <span class="font-bold text-slate-800">${renderedItems} mặt hàng</span></div>`;
 
             container.innerHTML = summary + blocks.map(block => {
-                if (block.type === 'PO') return renderStatusPOBlock(block.po, block.items);
+                if (block.type === 'PO') return renderStatusPOBlock(block.po, block.items, { matchedItemIds: hasSearch && searchMode === 'ITEM' ? matchedItemIds : null });
                 if (block.type === 'NO_PO_PURCHASED') return renderStatusNoPOBlock(block.items, 'PURCHASED_NO_PO');
                 return renderStatusNoPOBlock(block.items, 'NOT_PURCHASED');
             }).join('');
@@ -11344,19 +11415,21 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
 
             const searchEl = document.getElementById('search-history');
             const filterEl = document.getElementById('filter-history-type');
-            const search = (searchEl?.value || '').trim().toLowerCase();
+            const search = normalizeSearchText(searchEl?.value || '');
+            const searchTokens = search.split(/\s+/).filter(Boolean);
             const filterType = filterEl?.value || 'Tất cả';
 
             const rows = [...trackingHistory]
                 .filter(h => filterType === 'Tất cả' || h.type === filterType)
                 .filter(h => {
-                    if (!search) return true;
-                    const text = [
+                    if (!searchTokens.length) return true;
+                    const text = normalizeSearchText([
                         h.orderGroupId, h.item, h.restaurant, h.supplier, h.actor, h.type,
-                        h.details?.message, h.details?.note,
-                        h.details?.fromStage, h.details?.toStage, h.details?.status
-                    ].filter(Boolean).join(' ').toLowerCase();
-                    return text.includes(search);
+                        h.timestamp, formatDateVN(h.timestamp), h.details?.message, h.details?.note,
+                        h.details?.fromStage, h.details?.toStage, h.details?.status,
+                        h.details?.invoiceNo, h.details?.invoiceDate, h.details?.poNumber
+                    ].filter(Boolean).join(' '));
+                    return searchTokens.every(token => text.includes(token));
                 })
                 .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
