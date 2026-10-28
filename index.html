@@ -284,6 +284,9 @@
                     <button onclick="openExportSSGModal()" class="inline-flex items-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg shadow-sm transition whitespace-nowrap">
                         <i data-lucide="file-spreadsheet" class="w-4 h-4 mr-2"></i> Xuất Excel SSG
                     </button>
+                    <button type="button" onclick="openSupplierQuoteRequestExportModal()" class="inline-flex items-center px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg shadow-sm transition whitespace-nowrap" title="Xuất riêng danh sách đã hỏi giá của từng nhà cung cấp để gửi đi hỏi giá">
+                        <i data-lucide="file-output" class="w-4 h-4 mr-2"></i> Xuất danh sách hỏi giá NCC
+                    </button>
                     <div class="relative flex-1 sm:w-80 min-w-[280px]">
                         <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
                         <input type="text" id="search-quotes" oninput="renderQuotes()" placeholder="Tìm From, ngày, mặt hàng, NCC, trạng thái..." class="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -1115,6 +1118,53 @@
                 <button type="button" onclick="exportSSGExcel()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm transition flex items-center gap-2">
                     <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
                     <span>Xuất Excel SSG</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EXPORT QUOTE REQUEST PER SUPPLIER (TAB 3) -->
+    <div id="modal-export-quote-request" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[70] flex items-center justify-center hidden p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-xl space-y-5 max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-start border-b border-slate-100 pb-3">
+                <div>
+                    <h3 class="font-bold text-slate-900 text-base">Xuất danh sách hỏi giá theo từng NCC</h3>
+                    <p class="text-xs text-slate-500 mt-1">Mỗi lần chỉ xuất 01 nhà cung cấp. File chỉ gồm những mặt hàng đã ghi nhận hỏi giá NCC đó, không trộn mặt hàng hỏi NCC khác.</p>
+                </div>
+                <button type="button" onclick="closeModal('modal-export-quote-request')" class="text-slate-400 hover:text-slate-600" title="Đóng">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="export-quote-request-from" class="block text-xs font-semibold text-slate-700 mb-1">From (Bộ phận)</label>
+                    <select id="export-quote-request-from" onchange="updateSupplierQuoteRequestDateOptions()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"></select>
+                </div>
+                <div>
+                    <label for="export-quote-request-date" class="block text-xs font-semibold text-slate-700 mb-1">Ngày Order</label>
+                    <select id="export-quote-request-date" onchange="updateSupplierQuoteRequestSupplierOptions()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"></select>
+                </div>
+                <div>
+                    <label for="export-quote-request-supplier" class="block text-xs font-semibold text-slate-700 mb-1">Nhà cung cấp đã hỏi giá <span class="text-rose-500">*</span></label>
+                    <select id="export-quote-request-supplier" onchange="updateSupplierQuoteRequestPreview()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"></select>
+                </div>
+                <div>
+                    <label for="export-quote-request-scope" class="block text-xs font-semibold text-slate-700 mb-1">Phạm vi mặt hàng</label>
+                    <select id="export-quote-request-scope" onchange="updateSupplierQuoteRequestPreview()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                        <option value="pending" selected>Đã hỏi – chưa có giá (để gửi hỏi giá)</option>
+                        <option value="allAsked">Tất cả mặt hàng đã từng hỏi NCC</option>
+                    </select>
+                </div>
+            </div>
+            <div class="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-900">
+                File xuất dành riêng cho nhà cung cấp: gồm tên hàng, đơn vị, số lượng, From, ngày Order và các cột trống để NCC điền đơn giá, VAT, thời gian giao hàng, hiệu lực báo giá và ghi chú. Giá của NCC khác sẽ không được đưa vào file.
+            </div>
+            <div id="export-quote-request-preview" class="border border-slate-200 rounded-xl p-4 text-sm text-slate-700">Chọn nhà cung cấp để xem trước danh sách mặt hàng.</div>
+            <div class="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                <button type="button" onclick="closeModal('modal-export-quote-request')" class="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 transition">Hủy</button>
+                <button type="button" onclick="exportSupplierQuoteRequestExcel()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm transition flex items-center gap-2">
+                    <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                    <span>Xuất Excel gửi NCC</span>
                 </button>
             </div>
         </div>
@@ -10154,6 +10204,192 @@ Mỗi mặt hàng được tạo một orderGroupId mới. Dữ liệu mặt hà
             const fileName = `SSG_${fromLabel}_${dateLabel}_${supplierLabel}.xlsx`;
             XLSX.writeFile(wb, fileName);
             closeModal('modal-export-ssg');
+        }
+
+        // --- TAB 3: EXPORT REQUEST LIST FOR ONE SUPPLIER ----------------------
+        // Exports only items that have an explicit quote-request record for the selected supplier.
+        // Default scope is outstanding requests without a real price, so the file can be sent for follow-up.
+        function getSupplierQuoteRequestScopedOrders() {
+            const from = document.getElementById('export-quote-request-from')?.value || '__ALL_FROM__';
+            const date = document.getElementById('export-quote-request-date')?.value || '__ALL_DATE__';
+            return getQuoteEligibleOrdersSorted().filter(order => {
+                const orderFrom = String(order?.restaurant || 'Chưa xác định');
+                const orderDate = normalizeSSGDateKey(order?.date);
+                return (from === '__ALL_FROM__' || orderFrom === from) &&
+                       (date === '__ALL_DATE__' || orderDate === date);
+            });
+        }
+
+        function getSupplierQuoteRequestExportOrders() {
+            const supplier = String(document.getElementById('export-quote-request-supplier')?.value || '').trim();
+            const scope = document.getElementById('export-quote-request-scope')?.value || 'pending';
+            if (!supplier) return [];
+            return getSupplierQuoteRequestScopedOrders().filter(order => {
+                const status = getQuoteStatusForSupplier(order, supplier);
+                if (!status.requestExists) return false;
+                if (scope === 'allAsked') return true;
+                // For sending to supplier now: include asked items with no numeric quote, skip rejected requests.
+                return !status.hasRealQuote && status.label !== 'Từ chối báo giá';
+            });
+        }
+
+        function openSupplierQuoteRequestExportModal() {
+            if (typeof XLSX === 'undefined') {
+                alert('Thư viện Excel chưa được tải. Vui lòng kiểm tra kết nối Internet và tải lại trang.');
+                return;
+            }
+            const fromSelect = document.getElementById('export-quote-request-from');
+            const datesSelect = document.getElementById('export-quote-request-date');
+            const allOrders = getQuoteEligibleOrdersSorted();
+            const fromValues = [...new Set(allOrders.map(order => String(order?.restaurant || 'Chưa xác định').trim()).filter(Boolean))]
+                .sort((a, b) => a.localeCompare(b, 'vi'));
+            fromSelect.innerHTML = [
+                '<option value="__ALL_FROM__">Tất cả From</option>',
+                ...fromValues.map(value => `<option value="${escapeHTMLAttribute(value)}">${escapeHTML(value)}</option>`)
+            ].join('');
+            fromSelect.value = '__ALL_FROM__';
+            datesSelect.innerHTML = '<option value="__ALL_DATE__">Tất cả ngày</option>';
+            datesSelect.value = '__ALL_DATE__';
+            document.getElementById('export-quote-request-scope').value = 'pending';
+            updateSupplierQuoteRequestSupplierOptions(true);
+            document.getElementById('modal-export-quote-request').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function updateSupplierQuoteRequestDateOptions() {
+            const from = document.getElementById('export-quote-request-from')?.value || '__ALL_FROM__';
+            const dateSelect = document.getElementById('export-quote-request-date');
+            const previous = dateSelect?.value || '__ALL_DATE__';
+            const dates = [...new Set(getQuoteEligibleOrdersSorted().filter(order =>
+                from === '__ALL_FROM__' || String(order?.restaurant || 'Chưa xác định') === from
+            ).map(order => normalizeSSGDateKey(order?.date)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+            dateSelect.innerHTML = [
+                '<option value="__ALL_DATE__">Tất cả ngày</option>',
+                ...dates.map(value => `<option value="${escapeHTMLAttribute(value)}">${escapeHTML(formatDateVN(value))}</option>`)
+            ].join('');
+            dateSelect.value = previous === '__ALL_DATE__' || dates.includes(previous) ? previous : '__ALL_DATE__';
+            updateSupplierQuoteRequestSupplierOptions();
+        }
+
+        function updateSupplierQuoteRequestSupplierOptions(preserveSelection = false) {
+            const supplierSelect = document.getElementById('export-quote-request-supplier');
+            const previous = preserveSelection ? String(supplierSelect?.value || '') : '';
+            const scopeOrders = getSupplierQuoteRequestScopedOrders();
+            const names = [...new Set(scopeOrders.flatMap(order => getQuoteRequestSupplierNames(order)))]
+                .sort((a, b) => a.localeCompare(b, 'vi'));
+            supplierSelect.innerHTML = [
+                '<option value="">-- Chọn NCC đã hỏi giá --</option>',
+                ...names.map(name => `<option value="${escapeHTMLAttribute(name)}">${escapeHTML(name)}</option>`)
+            ].join('');
+            if (previous && names.some(name => name.toLowerCase() === previous.toLowerCase())) {
+                supplierSelect.value = names.find(name => name.toLowerCase() === previous.toLowerCase()) || '';
+            } else if (names.length === 1) {
+                supplierSelect.value = names[0];
+            } else {
+                supplierSelect.value = '';
+            }
+            updateSupplierQuoteRequestPreview();
+        }
+
+        function updateSupplierQuoteRequestPreview() {
+            const preview = document.getElementById('export-quote-request-preview');
+            if (!preview) return;
+            const supplier = String(document.getElementById('export-quote-request-supplier')?.value || '').trim();
+            const from = document.getElementById('export-quote-request-from')?.value || '__ALL_FROM__';
+            const date = document.getElementById('export-quote-request-date')?.value || '__ALL_DATE__';
+            const scope = document.getElementById('export-quote-request-scope')?.value || 'pending';
+            if (!supplier) {
+                preview.innerHTML = '<div class="font-semibold text-amber-700">Vui lòng chọn một NCC đã được ghi nhận hỏi giá. Danh sách NCC chỉ lấy từ các mặt hàng có yêu cầu hỏi giá đã lưu.</div>';
+                return;
+            }
+            const rows = getSupplierQuoteRequestExportOrders();
+            const allAsked = getSupplierQuoteRequestScopedOrders().filter(order => getQuoteStatusForSupplier(order, supplier).requestExists);
+            const fromLabel = from === '__ALL_FROM__' ? 'Tất cả From' : from;
+            const dateLabel = date === '__ALL_DATE__' ? 'Tất cả ngày' : formatDateVN(date);
+            const quotedCount = allAsked.filter(order => getQuoteStatusForSupplier(order, supplier).hasRealQuote).length;
+            const rejectedCount = allAsked.filter(order => getQuoteStatusForSupplier(order, supplier).label === 'Từ chối báo giá').length;
+            const itemList = rows.slice(0, 12).map((order, index) => `
+                <li class="py-1 ${index ? 'border-t border-slate-100' : ''}">
+                    <span class="font-semibold">${escapeHTML(String(order?.item || '(Chưa có tên hàng)'))}</span>
+                    <span class="text-slate-500"> — ${escapeHTML(String(order?.qty ?? ''))} ${escapeHTML(String(order?.unit || ''))} · ${escapeHTML(String(order?.restaurant || 'Chưa xác định'))} · ${escapeHTML(formatDateVN(order?.date))}</span>
+                </li>`).join('');
+            preview.innerHTML = `
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <span class="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold">NCC: ${escapeHTML(supplier)}</span>
+                    <span class="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-xs">From: ${escapeHTML(fromLabel)}</span>
+                    <span class="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-xs">Ngày: ${escapeHTML(dateLabel)}</span>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                    <div class="rounded-lg border border-slate-200 p-3"><div class="text-xs text-slate-500">Mặt hàng xuất</div><div class="text-xl font-bold text-indigo-700">${rows.length}</div></div>
+                    <div class="rounded-lg border border-slate-200 p-3"><div class="text-xs text-slate-500">Đã hỏi NCC</div><div class="text-xl font-bold text-slate-800">${allAsked.length}</div></div>
+                    <div class="rounded-lg border border-slate-200 p-3"><div class="text-xs text-slate-500">Đã có giá</div><div class="text-xl font-bold text-emerald-700">${quotedCount}</div></div>
+                    <div class="rounded-lg border border-slate-200 p-3"><div class="text-xs text-slate-500">Từ chối</div><div class="text-xl font-bold text-rose-700">${rejectedCount}</div></div>
+                </div>
+                <div class="text-xs text-slate-600 mb-2">${scope === 'pending' ? 'Đang lọc các yêu cầu đã hỏi nhưng chưa có giá và không ở trạng thái từ chối.' : 'Đang lấy toàn bộ mặt hàng đã từng gửi yêu cầu hỏi giá NCC này.'}</div>
+                ${rows.length ? `<ul class="max-h-48 overflow-y-auto border border-slate-200 rounded-lg px-3 py-2">${itemList}${rows.length > 12 ? `<li class="pt-2 text-xs text-slate-500">… và ${rows.length - 12} mặt hàng khác trong file Excel.</li>` : ''}</ul>` : '<div class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">Không có mặt hàng phù hợp để xuất. Kiểm tra lại From/ngày/NCC hoặc chọn “Tất cả mặt hàng đã từng hỏi NCC”.</div>'}
+            `;
+        }
+
+        function exportSupplierQuoteRequestExcel() {
+            if (typeof XLSX === 'undefined') {
+                alert('Thư viện Excel chưa được tải. Vui lòng kiểm tra kết nối Internet và tải lại trang.');
+                return;
+            }
+            const supplier = String(document.getElementById('export-quote-request-supplier')?.value || '').trim();
+            if (!supplier) { alert('Vui lòng chọn một nhà cung cấp.'); return; }
+            const selectedOrders = getSupplierQuoteRequestExportOrders();
+            if (!selectedOrders.length) {
+                alert('Không có mặt hàng phù hợp để xuất cho NCC này. Có thể NCC đã báo giá hết các mặt hàng hoặc bạn cần đổi phạm vi xuất.');
+                return;
+            }
+            const headers = [
+                'STT', 'Tên mặt hàng', 'Đơn vị tính', 'Số lượng', 'From (Bộ phận)', 'Ngày Order', 'Khu vực giao hàng',
+                'Đơn giá chưa VAT (NCC điền)', 'VAT (%) (NCC điền)', 'Thời gian giao hàng (NCC điền)',
+                'Hiệu lực báo giá (NCC điền)', 'Ghi chú của NCC'
+            ];
+            const rows = [headers];
+            selectedOrders.forEach((order, index) => {
+                const qty = order?.qty === null || order?.qty === undefined || order?.qty === '' ? '' : (Number.isFinite(Number(order.qty)) ? Number(order.qty) : String(order.qty));
+                rows.push([
+                    index + 1,
+                    String(order?.item || ''),
+                    String(order?.unit || ''),
+                    qty,
+                    String(order?.restaurant || 'Chưa xác định'),
+                    formatDateVN(order?.date),
+                    String(order?.area || ''),
+                    '', '', '', '', ''
+                ]);
+            });
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            ws['!cols'] = [
+                { wch: 7 }, { wch: 38 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 20 },
+                { wch: 24 }, { wch: 18 }, { wch: 26 }, { wch: 26 }, { wch: 32 }
+            ];
+            ws['!freeze'] = { xSplit: 2, ySplit: 1 };
+            ws['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length}` };
+            ws['!rows'] = [{ hpt: 34 }, ...selectedOrders.map(() => ({ hpt: 24 }))];
+            for (let c = 0; c < headers.length; c++) {
+                const cell = ws[XLSX.utils.encode_cell({ r: 0, c })];
+                if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1F4E78' } }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true } };
+            }
+            for (let r = 1; r < rows.length; r++) {
+                for (let c = 0; c < headers.length; c++) {
+                    const cell = ws[XLSX.utils.encode_cell({ r, c })];
+                    if (cell) cell.s = { alignment: { vertical: 'center', wrapText: true } };
+                }
+                const qtyCell = ws[XLSX.utils.encode_cell({ r, c: 3 })];
+                if (qtyCell && typeof qtyCell.v === 'number') qtyCell.z = '#,##0.##';
+            }
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Danh sach hoi gia');
+            const fromValue = document.getElementById('export-quote-request-from')?.value || '__ALL_FROM__';
+            const dateValue = document.getElementById('export-quote-request-date')?.value || '__ALL_DATE__';
+            const fromLabel = fromValue === '__ALL_FROM__' ? 'ALL_FROM' : sanitizeSSGFilePart(fromValue);
+            const dateLabel = dateValue === '__ALL_DATE__' ? 'ALL_DATE' : dateValue.replace(/-/g, '');
+            const fileName = `YEU_CAU_BAO_GIA_${sanitizeSSGFilePart(supplier).toUpperCase()}_${fromLabel}_${dateLabel}.xlsx`;
+            XLSX.writeFile(wb, fileName);
+            closeModal('modal-export-quote-request');
         }
 
         // --- TAB 4: STATUS & STAGE PROGRESS ---------------------------------
